@@ -2,13 +2,14 @@
 
 Subscription-native LLM gateway in Rust. Treats **accounts** — Claude Max sessions, ChatGPT Plus (Codex) sessions, future session-oriented providers — as the first-class primitive, not API keys.
 
-Three inbound surfaces, all wired to a shared account pool, cooldown cache, and refresh-singleflight manager:
+Four inbound surfaces, all wired to a shared account pool, cooldown cache, and refresh-singleflight manager:
 
 | Route | Upstream | Mode |
 |---|---|---|
 | `POST /v1/messages` | `api.anthropic.com/v1/messages` | Byte-for-byte passthrough with OAuth body cloak + Stainless headers + `anthropic-beta: oauth-2025-04-20`. Refresh-on-401. |
 | `POST /v1/chat/completions` | `api.anthropic.com/v1/messages` | OpenAI Chat → Anthropic Messages translation in, Anthropic SSE → OpenAI chunks out. Streaming and non-streaming. |
 | `POST /codex/responses` | `chatgpt.com/backend-api/codex/responses` | Codex CLI passthrough with cookie jar + device id + `codex-cli/<v>` fingerprint. |
+| `POST /codex/v1/messages` | `chatgpt.com/backend-api/codex/responses` | Anthropic Messages → Codex Responses. Lets Claude Code (`ANTHROPIC_BASE_URL=http://submux/codex`) drive a ChatGPT Plus account. |
 
 ## Quick start
 

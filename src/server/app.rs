@@ -26,6 +26,7 @@ pub fn build_app(state: AppState) -> AxumRouter {
         .merge(crate::server::routes::messages::router())
         .merge(crate::server::routes::chat::router())
         .merge(crate::server::routes::codex::router())
+        .merge(crate::server::routes::codex_messages::router())
         .merge(crate::server::routes::admin::router())
         .merge(crate::server::routes::metrics::router())
         .layer(axum::middleware::from_fn(

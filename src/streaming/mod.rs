@@ -8,3 +8,4 @@ pub mod sse_emitter;
 pub mod sse_parser;
 pub mod tee;
 pub mod translate;
+pub mod translate_responses_to_anthropic;
