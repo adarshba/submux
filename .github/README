@@ -1,0 +1,134 @@
+SUBMUX
+
+subscription multiplexer
+One gateway. Many sessions. Zero API keys.
+
+WHAT IS SUBMUX?
+
+Submux is a subscription-native LLM gateway in Rust. It treats accounts —
+Claude Max sessions, ChatGPT Plus sessions, future session-oriented
+providers — as the first-class primitive, not API keys.
+
+Think of it as Envoy for AI subscriptions: a protocol-aware data plane that
+terminates client traffic in Anthropic Messages or OpenAI Chat format,
+picks a healthy account from a pool of session-backed credentials, and
+forwards (or translates) the request upstream with byte-level preservation
+of provider-native semantics.
+
+WHY
+
+Existing gateways (LiteLLM, Neurolink) assume the unit of capacity is an
+API key. Subscriptions are different: they have sessions, refresh tokens,
+cookie jars, device fingerprints, OAuth flows, per-account rate limits,
+and per-account cooldowns. Stuffing them into an API-key abstraction loses
+half the information that matters.
+
+Submux is built bottom-up around the Account aggregate, not around the API
+key.
+
+FEATURES
+
+- Anthropic Messages and OpenAI Chat protocols on the inbound side
+- Anthropic Messages as the canonical internal shape (lossless thinking
+  blocks, prompt cache markers, tool_use signatures)
+- Stateful Account aggregate: access token, refresh token, cookie jar,
+  device id, expiry, per-account refresh mutex, last_429_at
+- Singleflight refresh to avoid stampeding the refresh endpoint
+- Per-account cooldown with Moka L1 plus optional Redis L2
+- Three-tier fallback chain (generic, context_window, content_policy)
+- Retry with jittered backoff (something Neurolink and LiteLLM both miss)
+- Zero-copy SSE tee: client bytes leave the wire before telemetry parses
+- Streaming-aware mid-stream failover via checkpoint cursor
+- OAuth body cloaking with the Claude Code client id and Stainless headers
+- SecretBox for refresh tokens (XChaCha20-Poly1305, not XOR)
+- OpenTelemetry traces and Prometheus metrics out of the box
+
+TECH STACK
+
+Core
+
+- Rust (stable, edition 2021)
+- tokio 1.42 async runtime
+- axum 0.7 inbound server
+- reqwest 0.12 outbound HTTP plus per-account cookie jars
+- arc-swap, dashmap, moka, parking_lot for hot-path concurrency
+- chacha20poly1305, zeroize for credential sealing
+- tracing, tracing-subscriber for structured logs
+
+Optional
+
+- Postgres or SQLite for AccountStore
+- Redis for cross-replica cooldown and refresh coordination
+- OpenTelemetry collector for traces and metrics
+
+PROJECT STRUCTURE
+
+A single crate with internal modules.
+
+src/
+├── lib.rs           module roots + re-exports
+├── main.rs          binary entry (tokio + config + serve)
+├── core/            types and traits, no I/O
+├── protocols/       Anthropic + OpenAI inbound/outbound
+├── providers/       outbound provider adapters
+├── router/          scheduler, strategies, cooldown, retry
+├── accounts/        Account pool, refresh, cookie jar, quota
+├── streaming/       SSE parser, tee, translate, checkpoint
+├── telemetry/       OTel tracer, metrics, event channel
+├── storage/         AccountStore, SecretBox, keyring
+├── config/          figment loader (file + env + CLI)
+└── server/          axum app, routes, middleware
+
+See ARCHITECTURE.md for the full design, source-level analysis of the two
+reference implementations, request and streaming lifecycle diagrams, and
+the MVP and production hardening plans.
+
+DEVELOPMENT
+
+Check the workspace:
+
+cargo check
+
+Build a release binary:
+
+cargo build --release
+
+Run the gateway:
+
+SUBMUX_BIND=0.0.0.0:7080 cargo run
+
+COMMANDS
+
+cargo check       Type-check the crate
+cargo build       Debug build
+cargo build -r    Release build
+cargo test        Run unit tests
+cargo run         Start the gateway with defaults
+
+STATUS
+
+Scaffolding stage. The crate compiles, module surfaces are declared, and
+most implementations are stubs returning "not implemented". The phased
+implementation plan lives in ARCHITECTURE.md §11.
+
+DESIGN PHILOSOPHY
+
+Submux is built around three ideas:
+
+- accounts, not keys
+- bytes, not tokens, on the fast path
+- failure is the steady state, retry it with jitter
+
+Minimal protocol mutation. Clear module seams. No god-objects.
+
+DISCLAIMER
+
+Submux is a personal engineering project. It is not affiliated with
+Anthropic, OpenAI, or any subscription provider. Use it only with accounts
+you own and within each provider's terms of service.
+
+LICENSE
+
+MIT
+
+"One gateway. Many sessions. Zero API keys."
