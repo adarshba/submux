@@ -1,11 +1,10 @@
 [package]
 name = "submux"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 rust-version = "1.78"
 license = "Apache-2.0"
 description = "Subscription-native LLM gateway (Claude Max, ChatGPT Plus, future session providers)"
-repository = "https://github.com/example/submux"
 readme = "README.md"
 keywords = ["llm", "gateway", "proxy", "anthropic", "openai"]
 categories = ["api-bindings", "web-programming::http-server"]
