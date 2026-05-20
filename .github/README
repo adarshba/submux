@@ -43,6 +43,78 @@ FEATURES
 - SecretBox for refresh tokens (XChaCha20-Poly1305, not XOR)
 - OpenTelemetry traces and Prometheus metrics out of the box
 
+SETUP
+
+1. Install
+
+   cargo install submux
+
+   Requires Rust. Get it at https://rustup.rs — one command, a few minutes.
+
+2. Get your tokens
+
+   Submux uses your existing Claude Max and/or ChatGPT Plus subscriptions.
+   You copy a token out of your browser. No coding required.
+
+   What is the Network tab?
+   It is a panel built into every browser that shows requests your browser
+   makes in the background. You only need to find one value in it.
+
+   --- Anthropic (Claude Max) ---
+
+   a. Go to claude.ai in Chrome or Firefox. Log in.
+   b. Open Developer Tools:
+        Mac:          Cmd + Option + I
+        Windows/Linux: F12
+   c. Click the Network tab at the top of the panel.
+   d. Send any message in Claude (e.g. "hi").
+   e. In the Network panel, click a request that contains api.anthropic.com.
+   f. Click the Headers tab in the side panel that opens.
+   g. Under Request Headers, find the line starting with authorization:
+   h. It looks like:  Bearer sk-ant-oat01-...
+      Copy everything after "Bearer " (not including the space).
+      That is your SUBMUX_ANTHROPIC_OAUTH_TOKEN.
+   i. Optional: look through the same request's headers and the Response
+      Headers tab for any value starting with sk-ant-ort01-...
+      If found, that is your SUBMUX_ANTHROPIC_OAUTH_REFRESH_TOKEN.
+      It lets submux renew your session automatically when it expires.
+
+   --- Codex (ChatGPT Plus) ---
+
+   a. Go to chatgpt.com. Log in.
+   b. Open Developer Tools (Cmd + Option + I / F12).
+   c. Click the Network tab.
+   d. Send any message in ChatGPT.
+   e. Find a request whose URL contains chatgpt.com/backend-api. Click it.
+   f. Click the Headers tab in the side panel.
+   g. Under Request Headers, find authorization:
+   h. Copy everything after "Bearer ". That is your SUBMUX_OPENAI_ACCESS_TOKEN.
+
+3. Export your tokens
+
+   Paste the values you copied into your terminal. You only need the
+   sections for the providers you use.
+
+   export SUBMUX_ANTHROPIC_OAUTH_TOKEN="sk-ant-oat01-..."
+   export SUBMUX_ANTHROPIC_OAUTH_REFRESH_TOKEN="sk-ant-ort01-..."   # optional
+
+   export SUBMUX_OPENAI_ACCESS_TOKEN="eyJhbGciOi..."   # Codex only
+
+   Or copy .env.example to .env, fill in your values, then: source .env
+
+4. Run
+
+   submux
+
+   Binds to 127.0.0.1:8080 by default.
+   Override: SUBMUX_BIND=0.0.0.0:9000 submux
+
+5. Point your client at it
+
+   Claude Code (Claude Max):        ANTHROPIC_BASE_URL=http://127.0.0.1:8080
+   OpenAI-compatible client:        base_url=http://127.0.0.1:8080
+   Claude Code (ChatGPT Plus):      ANTHROPIC_BASE_URL=http://127.0.0.1:8080/codex
+
 TECH STACK
 
 Core
@@ -83,7 +155,7 @@ See ARCHITECTURE.md for the full design, source-level analysis of the two
 reference implementations, request and streaming lifecycle diagrams, and
 the MVP and production hardening plans.
 
-DEVELOPMENT
+DEVELOPMENT (contributors)
 
 Check the workspace:
 
@@ -93,23 +165,9 @@ Build a release binary:
 
 cargo build --release
 
-Run the gateway:
+Run tests and lints:
 
-SUBMUX_BIND=0.0.0.0:7080 cargo run
-
-COMMANDS
-
-cargo check       Type-check the crate
-cargo build       Debug build
-cargo build -r    Release build
-cargo test        Run unit tests
-cargo run         Start the gateway with defaults
-
-STATUS
-
-Scaffolding stage. The crate compiles, module surfaces are declared, and
-most implementations are stubs returning "not implemented". The phased
-implementation plan lives in ARCHITECTURE.md §11.
+cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test --lib
 
 DESIGN PHILOSOPHY
 
@@ -129,6 +187,7 @@ you own and within each provider's terms of service.
 
 LICENSE
 
-MIT
+Apache-2.0
 
 "One gateway. Many sessions. Zero API keys."
+
