@@ -279,19 +279,27 @@ mod tests {
             .iter()
             .map(|k| ((*k).to_owned(), std::env::var(k).ok()))
             .collect();
-        for k in ALL_VARS {
-            std::env::remove_var(k);
-        }
-        for (k, v) in vars {
-            if let Some(value) = v {
-                std::env::set_var(k, value);
+        // SAFETY: edition-2024 marks env mutation `unsafe`. This test helper
+        // serializes all access through ENV_GUARD, so no other thread reads or
+        // writes these vars during the guarded section.
+        unsafe {
+            for k in ALL_VARS {
+                std::env::remove_var(k);
+            }
+            for (k, v) in vars {
+                if let Some(value) = v {
+                    std::env::set_var(k, value);
+                }
             }
         }
         let out = f();
-        for (k, original) in saved {
-            match original {
-                Some(value) => std::env::set_var(&k, value),
-                None => std::env::remove_var(&k),
+        // SAFETY: ENV_GUARD is still held; restore the original environment.
+        unsafe {
+            for (k, original) in saved {
+                match original {
+                    Some(value) => std::env::set_var(&k, value),
+                    None => std::env::remove_var(&k),
+                }
             }
         }
         drop(lock);

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::accounts::cooldown::{CooldownCache, CooldownReason};
-use crate::accounts::{quota::QuotaSnapshot, Account};
+use crate::accounts::{Account, quota::QuotaSnapshot};
 use crate::constants::http_headers::{
     H_RL_5H_RESET, H_RL_5H_UTIL, H_RL_7D_RESET, H_RL_7D_UTIL, H_RL_FALLBACK, H_RL_STATUS,
 };

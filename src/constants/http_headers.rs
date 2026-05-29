@@ -8,6 +8,9 @@ pub const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 /// `Authorization: Bearer <key>`; checked by the inbound auth middleware.
 pub const X_API_KEY: HeaderName = HeaderName::from_static("x-api-key");
 
+/// Inbound consumer identity (`usr_<id>`) used for per-consumer metric labels.
+pub const X_PROXY_USER_ID: HeaderName = HeaderName::from_static("x-proxy-user-id");
+
 /// Header name strings that are stripped from inbound client requests before
 /// proxying upstream. Authorization is rewritten by the adapter; the rest are
 /// either hop-by-hop or fingerprint headers we re-emit ourselves.

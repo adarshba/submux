@@ -1,6 +1,7 @@
 //! Upstream URL paths and endpoint constants for the providers we proxy.
 
 pub const ANTHROPIC_MESSAGES_PATH: &str = "/v1/messages";
+pub const ANTHROPIC_MODELS_PATH: &str = "/v1/models";
 pub const ANTHROPIC_DEFAULT_UPSTREAM: &str = "https://api.anthropic.com";
 
 pub const CODEX_RESPONSES_PATH: &str = "/backend-api/codex/responses";

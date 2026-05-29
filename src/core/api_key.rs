@@ -118,11 +118,12 @@ mod tests {
         let key = ApiKey::generate();
         assert!(key.as_str().starts_with(API_KEY_PREFIX));
         assert_eq!(key.as_str().len(), API_KEY_PREFIX.len() + 32);
-        assert!(key
-            .as_str()
-            .chars()
-            .skip(API_KEY_PREFIX.len())
-            .all(|c| c.is_ascii_hexdigit()));
+        assert!(
+            key.as_str()
+                .chars()
+                .skip(API_KEY_PREFIX.len())
+                .all(|c| c.is_ascii_hexdigit())
+        );
     }
 
     #[test]

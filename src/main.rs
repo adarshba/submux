@@ -3,19 +3,27 @@ use std::sync::Arc;
 use clap::Parser;
 use eyre::Result;
 use is_terminal::IsTerminal;
-use submux::accounts::{seed_from_settings, AccountPool, CooldownCache, RefreshManager};
+use submux::accounts::{AccountPool, CooldownCache, RefreshManager, seed_from_settings};
 use submux::cli::Cli;
 use submux::config::Settings;
 use submux::constants::limits::DEFAULT_COOLDOWN_CACHE_CAPACITY;
 use submux::providers::anthropic::AnthropicProxy;
-use submux::providers::codex::{install as install_codex_proxy, CodexProxy};
+use submux::providers::codex::{CodexProxy, install as install_codex_proxy};
 use submux::server::{app::AppState, banner, build_app, shutdown::shutdown_signal};
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use submux::telemetry::metrics::{self, OtelConfig};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.log_filter());
+
+    let meter_provider = metrics::init(OtelConfig {
+        service_version: env!("CARGO_PKG_VERSION").to_owned(),
+        otlp_endpoint: std::env::var("SUBMUX_OTLP_ENDPOINT")
+            .ok()
+            .filter(|e| !e.trim().is_empty()),
+    })?;
 
     let settings = Settings::load(cli.config)?;
 
@@ -54,6 +62,10 @@ async fn main() -> Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    if let Err(err) = meter_provider.shutdown() {
+        tracing::warn!(error = %err, "metrics shutdown flush failed");
+    }
     Ok(())
 }
 

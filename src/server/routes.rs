@@ -4,3 +4,4 @@ pub mod codex_messages;
 pub mod health;
 pub mod messages;
 pub mod metrics;
+pub mod models;

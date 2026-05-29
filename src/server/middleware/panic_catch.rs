@@ -4,7 +4,7 @@
 use std::any::Any;
 
 use axum::body::Body;
-use http::{header, HeaderValue, Response, StatusCode};
+use http::{HeaderValue, Response, StatusCode, header};
 use tower_http::catch_panic::{CatchPanicLayer, ResponseForPanic};
 
 const PANIC_BODY: &[u8] =

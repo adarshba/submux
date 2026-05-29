@@ -28,7 +28,7 @@ pub fn done_marker() -> Bytes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::streaming::openai_chunks::{chat_completion_chunk, OpenAiChoice, OpenAiDelta};
+    use crate::streaming::openai_chunks::{OpenAiChoice, OpenAiDelta, chat_completion_chunk};
 
     #[test]
     fn encodes_chunk_as_sse_frame() {

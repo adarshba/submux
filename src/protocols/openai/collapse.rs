@@ -5,7 +5,7 @@
 //! the upstream call still returns SSE chunks, so we accumulate them and
 //! collapse into the canonical non-streaming response shape.
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 use crate::streaming::openai_chunks::OpenAiChatChunk;

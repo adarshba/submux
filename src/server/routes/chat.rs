@@ -1,14 +1,14 @@
 use axum::{
+    Json, Router,
     body::Body,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
-    Json, Router,
 };
 use bytes::Bytes;
 use futures::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::core::{NormalizedRequest, ProviderKind};
 use crate::protocols::openai::collapse::chunks_to_completion;
@@ -22,7 +22,7 @@ use crate::streaming::anthropic_events::AnthropicEvent;
 use crate::streaming::openai_chunks::OpenAiChatChunk;
 use crate::streaming::sse_parser::SseStreamParser;
 use crate::streaming::translate::AnthropicToOpenAiTranslator;
-use crate::streaming::{relay, AnthropicToOpenAiRelay};
+use crate::streaming::{AnthropicToOpenAiRelay, relay};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/v1/chat/completions", post(handle_chat))
@@ -257,8 +257,8 @@ async fn buffer_to_completion(upstream: PassthroughResponse, model: String) -> R
 mod tests {
     use super::*;
     use crate::streaming::openai_chunks::{
-        chat_completion_chunk, OpenAiChatChunk, OpenAiChoice, OpenAiDelta, OpenAiFunctionDelta,
-        OpenAiToolCallDelta,
+        OpenAiChatChunk, OpenAiChoice, OpenAiDelta, OpenAiFunctionDelta, OpenAiToolCallDelta,
+        chat_completion_chunk,
     };
 
     fn base(created: i64) -> OpenAiChatChunk {
