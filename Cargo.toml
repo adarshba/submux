@@ -1,8 +1,8 @@
 [package]
 name = "submux"
-version = "0.0.5"
-edition = "2021"
-rust-version = "1.78"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
 license = "Apache-2.0"
 description = "Subscription-native LLM gateway: Anthropic Claude Max + ChatGPT Codex"
 readme = "README.md"
@@ -61,6 +61,11 @@ ulid = { version = "1", features = ["serde"] }
 # telemetry
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["metrics"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["metrics", "http-proto", "reqwest-blocking-client"] }
+opentelemetry-prometheus = "0.32"
+prometheus = { version = "0.14", default-features = false }
 
 # crypto
 chacha20poly1305 = "0.10"

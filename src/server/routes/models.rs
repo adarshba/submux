@@ -1,46 +1,66 @@
-//! `POST /v1/messages` — Anthropic Messages passthrough.
+//! `GET /v1/models` + `GET /v1/models/:model` — Anthropic model-metadata
+//! passthrough.
+//!
+//! Claude Code probes these endpoints at startup to validate the selected
+//! model. Without them the gateway 404s the probe and the client reports the
+//! model as unavailable, even though `/v1/messages` works. We proxy upstream
+//! through the same OAuth cloak as the messages path so the list always
+//! reflects what the subscription can actually reach.
 
 use axum::{
     Router,
-    extract::State,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::Response,
-    routing::post,
+    routing::get,
 };
-use bytes::Bytes;
 use std::time::Instant;
 
+use crate::constants::upstream_paths::ANTHROPIC_MODELS_PATH;
 use crate::core::ProviderKind;
-use crate::providers::anthropic::quota::{apply_quota, parse_quota_headers};
 use crate::server::app::AppState;
 use crate::server::oauth_refresh::refresh_anthropic_account;
 use crate::server::responses::{
     anthropic_error_response, consumer_from_headers, forward_passthrough, record_terminal_metric,
-    sniff_model_hint,
 };
-use crate::streaming::usage_tap::meter_anthropic_tokens;
 use crate::telemetry::tracer;
 
 const PROVIDER: &str = "anthropic";
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/v1/messages", post(handle_messages))
+    Router::new()
+        .route("/v1/models", get(handle_list))
+        .route("/v1/models/:model", get(handle_get))
 }
 
-async fn handle_messages(
+async fn handle_list(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    proxy_models(&state, &headers, ANTHROPIC_MODELS_PATH.to_owned(), "models").await
+}
+
+async fn handle_get(
     State(state): State<AppState>,
+    Path(model): Path<String>,
     headers: HeaderMap,
-    body: Bytes,
+) -> Response {
+    let path = format!("{ANTHROPIC_MODELS_PATH}/{model}");
+    proxy_models(&state, &headers, path, &model).await
+}
+
+/// Resolve the Anthropic OAuth account, GET `upstream_path` with the cloak
+/// headers, and forward the response — refreshing the token once on a 401.
+async fn proxy_models(
+    state: &AppState,
+    headers: &HeaderMap,
+    upstream_path: String,
+    metric_label: &str,
 ) -> Response {
     let started = Instant::now();
     let request_id = tracer::new_request_id();
-    let consumer = consumer_from_headers(&headers);
-    let model_hint = sniff_model_hint(&body);
-    let model_group = model_hint.unwrap_or_else(|| "unknown".to_owned());
+    let consumer = consumer_from_headers(headers);
 
     let accounts = state.pool.by_provider(ProviderKind::AnthropicSubscription);
     let Some(account) = accounts.into_iter().next() else {
-        record_terminal_metric(PROVIDER, &model_group, "no_account", &consumer, started);
+        record_terminal_metric(PROVIDER, metric_label, "no_account", &consumer, started);
         return anthropic_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "no Anthropic OAuth account registered — set SUBMUX_ANTHROPIC_OAUTH_TOKEN at startup",
@@ -49,7 +69,7 @@ async fn handle_messages(
     let Some(mut token) = account.anthropic_oauth_token() else {
         record_terminal_metric(
             PROVIDER,
-            &model_group,
+            metric_label,
             "wrong_credential_kind",
             &consumer,
             started,
@@ -62,16 +82,13 @@ async fn handle_messages(
 
     let mut passthrough = match state
         .anthropic
-        .passthrough(&headers, body.clone(), &token)
+        .passthrough_get(headers, &upstream_path, &token)
         .await
     {
-        Ok(p) => {
-            apply_quota(&account, &state.cooldown, &parse_quota_headers(&p.headers)).await;
-            p
-        }
+        Ok(p) => p,
         Err(err) => {
-            tracing::warn!(request_id = %request_id, error = %err, "anthropic passthrough failed");
-            record_terminal_metric(PROVIDER, &model_group, "upstream_error", &consumer, started);
+            tracing::warn!(request_id = %request_id, error = %err, "anthropic models passthrough failed");
+            record_terminal_metric(PROVIDER, metric_label, "upstream_error", &consumer, started);
             return anthropic_error_response(
                 StatusCode::BAD_GATEWAY,
                 &format!("upstream error: {err}"),
@@ -81,23 +98,19 @@ async fn handle_messages(
 
     if passthrough.status == StatusCode::UNAUTHORIZED && account.anthropic_refresh_token().is_some()
     {
-        match refresh_anthropic_account(&state, &account).await {
+        match refresh_anthropic_account(state, &account).await {
             Ok(new_token) => {
                 token = new_token;
-                match state.anthropic.passthrough(&headers, body, &token).await {
-                    Ok(retry) => {
-                        apply_quota(
-                            &account,
-                            &state.cooldown,
-                            &parse_quota_headers(&retry.headers),
-                        )
-                        .await;
-                        passthrough = retry;
-                    }
+                match state
+                    .anthropic
+                    .passthrough_get(headers, &upstream_path, &token)
+                    .await
+                {
+                    Ok(retry) => passthrough = retry,
                     Err(err) => {
                         record_terminal_metric(
                             PROVIDER,
-                            &model_group,
+                            metric_label,
                             "upstream_error",
                             &consumer,
                             started,
@@ -118,16 +131,11 @@ async fn handle_messages(
     let status = passthrough.status;
     record_terminal_metric(
         PROVIDER,
-        &model_group,
+        metric_label,
         &status.as_u16().to_string(),
         &consumer,
         started,
     );
-
-    if status.is_success() {
-        passthrough.stream =
-            meter_anthropic_tokens(passthrough.stream, consumer, model_group.clone());
-    }
 
     forward_passthrough(passthrough)
 }

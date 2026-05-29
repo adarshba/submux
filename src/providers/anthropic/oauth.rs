@@ -179,11 +179,15 @@ mod tests {
 
     #[test]
     fn endpoints_contain_both_hosts() {
-        assert!(ANTHROPIC_OAUTH_TOKEN_ENDPOINTS
-            .iter()
-            .any(|e| e.contains("api.anthropic.com")));
-        assert!(ANTHROPIC_OAUTH_TOKEN_ENDPOINTS
-            .iter()
-            .any(|e| e.contains("console.anthropic.com")));
+        assert!(
+            ANTHROPIC_OAUTH_TOKEN_ENDPOINTS
+                .iter()
+                .any(|e| e.contains("api.anthropic.com"))
+        );
+        assert!(
+            ANTHROPIC_OAUTH_TOKEN_ENDPOINTS
+                .iter()
+                .any(|e| e.contains("console.anthropic.com"))
+        );
     }
 }

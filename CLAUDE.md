@@ -4,7 +4,7 @@ Operational rules for Claude Code in this repo. Deep reference lives in `docs/`.
 
 ## Project
 
-Submux — subscription-native LLM gateway. Proxies Claude Max (Anthropic OAuth) and Codex (OpenAI ChatGPT Plus/Pro subscription via `chatgpt.com/backend-api/codex/...`). Not an API-key gateway. Single binary, single crate, Rust 2021, axum 0.7 + tokio 1.42 + reqwest 0.12.
+Submux — subscription-native LLM gateway. Proxies Claude Max (Anthropic OAuth) and Codex (OpenAI ChatGPT Plus/Pro subscription via `chatgpt.com/backend-api/codex/...`). Not an API-key gateway. Single binary, single crate, Rust 2024 (edition), axum 0.7 + tokio 1.42 + reqwest 0.12. Metrics via the OpenTelemetry SDK (OTLP push + Prometheus `/metrics`).
 
 ## Commands
 
@@ -34,6 +34,7 @@ Read at startup in `src/main.rs`. Missing values are warned, not errors, so the 
 - `SUBMUX_OPENAI_ACCESS_TOKEN` — Codex bearer. Overrides auto-discovery from `~/.codex/auth.json`.
 - `SUBMUX_OPENAI_COOKIES` — JSON matching `SerializedCookieJar`. Optional; empty jar is allowed.
 - `SUBMUX_OPENAI_DEVICE_ID` — UUID; auto-generated and persisted to the config file if missing.
+- `SUBMUX_OTLP_ENDPOINT` — OTLP/HTTP base (e.g. `http://localhost:4318`). When set, metrics are pushed to the collector; `/metrics` scrape is always available regardless. `OTEL_METRIC_EXPORT_INTERVAL` (ms) tunes the push interval.
 
 Credential resolution per provider: **env > config file > auto-discovery > none**. Auto-discovery only fires when both env and file are unset; explicit values always win.
 
@@ -49,7 +50,7 @@ Defined in `Cargo.toml` as a single library + binary. Module roots are the direc
 - `protocols/` — wire-format parsers/emitters, OpenAI↔Anthropic translation, and chunk-to-completion buffering.
 - `streaming/` — SSE parser, emitter, translators, and the shared relay state machine (`relay::drive`).
 - `telemetry/` — metrics registry, Prometheus exporter, tracer ids.
-- `server/` — axum app, middleware (request id, auth, panic catch), routes (`/v1/messages`, `/v1/chat/completions`, `/codex/responses`, `/codex/v1/messages`, `/health`, `/ready`, `/metrics`), banner, shutdown.
+- `server/` — axum app, middleware (request id, auth, panic catch), routes (`/`, `/v1/messages`, `/v1/models`, `/v1/chat/completions`, `/codex/responses`, `/codex/v1/messages`, `/health`, `/ready`, `/metrics`), banner, shutdown.
 - `config/` — TOML config file + env resolver → `Settings`.
 - `constants/` — cross-module shared constants by topic.
 - `cli.rs` — clap flags (`--config`, `-q`, `-v`). No subcommands.
@@ -81,7 +82,7 @@ Detail in `docs/naming.md`. Quick reference:
 - **Constants & statics**: `SCREAMING_SNAKE_CASE` (`HOP_BY_HOP_HEADERS`, `CODEX_CLI_USER_AGENT`).
 - **Type parameters**: single capital letter or short PascalCase noun (`T`, `S`, `Stream`, `Backend`).
 - **Errors**: every error enum ends in `Error` (`AdapterError`, `SealError`); transient/permanent split via inner enum, not type.
-- **Domain noun**: `account` is canonical for "a single upstream identity"; never mix `user` / `session` / `tenant` in new code (a `Session` is *part of* an account, not a synonym).
+- **Domain noun**: `account` is canonical for "a single upstream identity"; never mix `user` / `session` / `tenant` in new code (a `Session` is *part of* an account, not a synonym). `consumer` (`ConsumerId`, the `X-Proxy-User-Id` value) is the canonical **inbound** identity — the calling machine/user — and is never a synonym for `account`.
 - **`*_test.rs` files are forbidden** — Rust uses inline `#[cfg(test)] mod tests` per file.
 
 ## Project structure (modern Rust 2018+ layout)

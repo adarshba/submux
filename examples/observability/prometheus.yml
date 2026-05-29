@@ -1,0 +1,26 @@
+# Prometheus scrape config that pulls submux's /metrics endpoint.
+#
+# The lgtm-autostart stack ships Prometheus as a remote-write receiver with no
+# scrape jobs, so nothing collects submux today. Mount this file into the
+# prometheus service (it already runs with
+# --config.file=/etc/prometheus/prometheus.yml) to start scraping.
+#
+# Docker Desktop (macOS/Windows): host.docker.internal resolves to the host
+# automatically. On Linux, add to the prometheus service in docker-compose.yml:
+#   extra_hosts:
+#     - "host.docker.internal:host-gateway"
+#
+# Keeping --web.enable-remote-write-receiver is fine; scrape and remote-write
+# can coexist.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: submux
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          instance: submux

@@ -13,4 +13,4 @@ pub use cooldown::{CooldownCache, CooldownEntry, CooldownReason};
 pub use discovery::DiscoverySource;
 pub use pool::AccountPool;
 pub use refresh::RefreshManager;
-pub use seed::{from_settings as seed_from_settings, SeedOutcome};
+pub use seed::{SeedOutcome, from_settings as seed_from_settings};

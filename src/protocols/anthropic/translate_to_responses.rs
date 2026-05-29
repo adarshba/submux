@@ -17,7 +17,7 @@
 //! `temperature` / `top_p` passthrough.
 
 use bytes::Bytes;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// Default Codex model when the client doesn't supply one or supplies an
 /// Anthropic model id. Matches the latest Codex CLI default.
@@ -124,11 +124,7 @@ fn translate_tools(tools: Option<&Value>) -> Option<Vec<Value>> {
         entry.insert("strict".into(), Value::Bool(false));
         out.push(Value::Object(entry));
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn translate_message_into(msg: &Value, out: &mut Vec<Value>) {

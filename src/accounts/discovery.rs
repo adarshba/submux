@@ -10,8 +10,8 @@
 pub mod anthropic;
 pub mod codex;
 
-pub use anthropic::{discover as discover_anthropic, DiscoveredAnthropic};
-pub use codex::{discover as discover_codex, DiscoveredCodex};
+pub use anthropic::{DiscoveredAnthropic, discover as discover_anthropic};
+pub use codex::{DiscoveredCodex, discover as discover_codex};
 
 /// Concrete origin for an auto-discovered credential. The label is what
 /// the startup banner renders so users can see exactly which CLI's

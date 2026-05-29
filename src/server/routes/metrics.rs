@@ -1,4 +1,4 @@
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 
 use crate::server::app::AppState;
 use crate::telemetry::exporters::prometheus::metrics_handler;

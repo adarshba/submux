@@ -150,10 +150,7 @@ mod tests {
     #[test]
     fn parses_hex_encoded_payload() {
         let raw_json = r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat01-xyz"}}"#;
-        let hex: String = raw_json
-            .bytes()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let hex: String = raw_json.bytes().map(|b| format!("{b:02x}")).collect();
         let parsed = parse_payload(&hex).expect("parse");
         assert_eq!(parsed.access_token, "sk-ant-oat01-xyz");
         assert!(parsed.refresh_token.is_none());

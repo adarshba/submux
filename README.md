@@ -45,7 +45,7 @@ That's it — the proxy is now running on `http://127.0.0.1:8080`. On first run 
 The startup banner looks like this:
 
 ```
-submux 0.0.5
+submux 0.1.0
   listening:    http://127.0.0.1:8080
   config:       /Users/you/.config/submux/config.toml  (created on this run)
   api key:      ⚠ open access — anyone on 127.0.0.1:8080 can use this proxy
@@ -85,6 +85,14 @@ Clients pointing at submux can use either form. Anthropic SDK and OpenAI SDK cli
 
 If you locked the proxy down, also set the matching `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` to your `smx_live_…` key.
 
+### 5. Observability (optional)
+
+Metrics are always exposed for scrape at `GET /metrics`. Set
+`SUBMUX_OTLP_ENDPOINT=http://localhost:4318` to also push them to an
+OpenTelemetry collector (e.g. the `lgtm-autostart` stack). Per-consumer usage is
+attributed when clients send an `X-Proxy-User-Id: <whoami>_<uuid>` header. An
+importable Grafana dashboard and wiring live in [`examples/`](./examples).
+
 ### CLI reference
 
 ```
@@ -110,7 +118,7 @@ src/
 ├── providers/    Outbound proxies: anthropic OAuth + codex (ChatGPT) session
 ├── protocols/    Anthropic ↔ OpenAI request/response translation
 ├── streaming/    SSE parser/emitter + shared relay state machine
-├── telemetry/    Metrics registry, Prometheus exporter, tracer ids
+├── telemetry/    OTel metrics (OTLP push + Prometheus /metrics), tracer ids
 ├── server/       axum app, middleware, route handlers, banner, shutdown
 ├── constants/    Header names, upstream paths, user agents, limits
 ├── config/       TOML config file + env resolver → Settings

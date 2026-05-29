@@ -8,7 +8,7 @@
 //! back to env / default". An empty string means "explicitly clear" (used
 //! today only for `api_key` to express open-access mode).
 
-use directories::ProjectDirs;
+use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -94,17 +94,36 @@ pub struct OpenAiFile {
 }
 
 /// Resolve the default config path: `$SUBMUX_CONFIG`, else
-/// `$XDG_CONFIG_HOME/submux/config.toml` (Linux) or the platform equivalent
-/// via the `directories` crate.
+/// `$XDG_CONFIG_HOME/submux/config.toml`, else `~/.config/submux/config.toml`.
+///
+/// XDG layout is used on **every** platform — including macOS, where we
+/// deliberately avoid the `~/Library/Application Support` convention so submux
+/// lives next to the CLI tools it proxies (`~/.claude`, `~/.codex`).
 pub fn default_path() -> Result<PathBuf, ConfigFileError> {
     if let Ok(custom) = std::env::var("SUBMUX_CONFIG") {
         if !custom.trim().is_empty() {
             return Ok(PathBuf::from(custom));
         }
     }
-    ProjectDirs::from("io", "submux", "submux")
-        .map(|p| p.config_dir().join("config.toml"))
-        .ok_or(ConfigFileError::NoPath)
+    let home = BaseDirs::new().ok_or(ConfigFileError::NoPath)?;
+    let xdg = std::env::var("XDG_CONFIG_HOME").ok();
+    Ok(default_config_dir(xdg.as_deref(), home.home_dir())
+        .join("submux")
+        .join("config.toml"))
+}
+
+/// Pure resolver for the config home: an absolute `$XDG_CONFIG_HOME` when set,
+/// otherwise `<home>/.config`. A relative `XDG_CONFIG_HOME` is ignored per the
+/// XDG spec. Split out from [`default_path`] so it is testable without mutating
+/// process environment.
+fn default_config_dir(xdg_config_home: Option<&str>, home: &Path) -> PathBuf {
+    if let Some(xdg) = xdg_config_home {
+        let candidate = Path::new(xdg);
+        if candidate.is_absolute() {
+            return candidate.to_path_buf();
+        }
+    }
+    home.join(".config")
 }
 
 /// Load the file at `path`, or write a fresh skeleton if it does not exist.
@@ -325,6 +344,24 @@ mod tests {
         let new_key = rotate_api_key(&path).expect("rotate");
         let body = std::fs::read_to_string(&path).expect("read");
         assert!(body.contains(new_key.as_str()));
+    }
+
+    #[test]
+    fn config_dir_prefers_absolute_xdg_else_dot_config() {
+        let home = Path::new("/home/u");
+        assert_eq!(
+            default_config_dir(Some("/custom/xdg"), home),
+            PathBuf::from("/custom/xdg")
+        );
+        assert_eq!(
+            default_config_dir(None, home),
+            PathBuf::from("/home/u/.config")
+        );
+        // A relative XDG_CONFIG_HOME is invalid per spec; fall back to ~/.config.
+        assert_eq!(
+            default_config_dir(Some("relative/path"), home),
+            PathBuf::from("/home/u/.config")
+        );
     }
 
     #[test]

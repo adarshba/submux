@@ -8,9 +8,9 @@ pub mod openai_chunks;
 pub mod relay;
 pub mod sse_emitter;
 pub mod sse_parser;
-pub mod tee;
 pub mod translate;
 pub mod translate_responses_to_anthropic;
+pub mod usage_tap;
 
 pub use chat_relay::AnthropicToOpenAiRelay;
-pub use relay::{drive, SseTranslator};
+pub use relay::{SseTranslator, drive};

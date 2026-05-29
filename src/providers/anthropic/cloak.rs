@@ -6,7 +6,7 @@
 //! entry (or pushed as a new last entry if absent) — prepending would
 //! invalidate the prompt cache on every request.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const CLOAK_TEXT: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 

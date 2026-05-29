@@ -8,6 +8,6 @@ pub mod translate_in;
 pub mod translate_out;
 
 pub use collapse::chunks_to_completion;
-pub use parse::{parse_chat_body, OpenAiChatRequest, OpenAiFunctionDef, OpenAiMessage, OpenAiTool};
+pub use parse::{OpenAiChatRequest, OpenAiFunctionDef, OpenAiMessage, OpenAiTool, parse_chat_body};
 pub use translate_in::openai_to_normalized;
 pub use translate_out::AnthropicToOpenAiTranslator;

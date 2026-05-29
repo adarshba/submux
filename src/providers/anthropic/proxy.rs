@@ -71,6 +71,50 @@ impl AnthropicProxy {
         let mut upstream_url = self.upstream.clone();
         upstream_url.set_path(ANTHROPIC_MESSAGES_PATH);
 
+        let req_headers = self.build_request_headers(client_headers, oauth_token);
+        let outgoing_body = cloak_bytes(&body).map(Bytes::from).unwrap_or(body);
+
+        let response = self
+            .http
+            .post(upstream_url)
+            .headers(req_headers)
+            .body(outgoing_body)
+            .send()
+            .await
+            .map_err(map_reqwest_send_error)?;
+
+        Ok(finalize_response(response).await)
+    }
+
+    /// Bodyless passthrough to `GET {upstream}{path}`, used for model-metadata
+    /// endpoints (`/v1/models`, `/v1/models/{id}`) that Claude Code probes to
+    /// validate the selected model. Reuses the same OAuth cloak headers as the
+    /// messages path so the subscription token is accepted upstream.
+    pub async fn passthrough_get(
+        &self,
+        client_headers: &HeaderMap,
+        path: &str,
+        oauth_token: &str,
+    ) -> Result<PassthroughResponse, AdapterError> {
+        let mut upstream_url = self.upstream.clone();
+        upstream_url.set_path(path);
+
+        let req_headers = self.build_request_headers(client_headers, oauth_token);
+
+        let response = self
+            .http
+            .get(upstream_url)
+            .headers(req_headers)
+            .send()
+            .await
+            .map_err(map_reqwest_send_error)?;
+
+        Ok(finalize_response(response).await)
+    }
+
+    /// Strip client auth/fingerprint headers, layer the OAuth cloak headers,
+    /// and merge any client-supplied `anthropic-beta` values alongside ours.
+    fn build_request_headers(&self, client_headers: &HeaderMap, oauth_token: &str) -> HeaderMap {
         let beta_name = HeaderName::from_static("anthropic-beta");
         let mut client_betas: Vec<String> = Vec::new();
         let mut req_headers = HeaderMap::new();
@@ -113,41 +157,35 @@ impl AnthropicProxy {
             }
         }
 
-        let outgoing_body = cloak_bytes(&body).map(Bytes::from).unwrap_or(body);
+        req_headers
+    }
+}
 
-        let response = self
-            .http
-            .post(upstream_url)
-            .headers(req_headers)
-            .body(outgoing_body)
-            .send()
-            .await
-            .map_err(map_reqwest_send_error)?;
+/// Split an upstream `reqwest::Response` into a [`PassthroughResponse`]. Error
+/// statuses are buffered into a single chunk; success bodies stream unbuffered.
+async fn finalize_response(response: reqwest::Response) -> PassthroughResponse {
+    let status = response.status();
+    let headers = strip_hop_by_hop(response.headers());
 
-        let status = response.status();
-        let headers = strip_hop_by_hop(response.headers());
-
-        if !status.is_success() {
-            let bytes = response.bytes().await.unwrap_or_default();
-            let single =
-                futures::stream::once(async move { Ok::<Bytes, AdapterError>(bytes) }).boxed();
-            return Ok(PassthroughResponse {
-                status,
-                headers,
-                stream: single,
-            });
-        }
-
-        let byte_stream = response
-            .bytes_stream()
-            .map(|chunk| chunk.map_err(map_reqwest_body_error))
-            .boxed();
-
-        Ok(PassthroughResponse {
+    if !status.is_success() {
+        let bytes = response.bytes().await.unwrap_or_default();
+        let single = futures::stream::once(async move { Ok::<Bytes, AdapterError>(bytes) }).boxed();
+        return PassthroughResponse {
             status,
             headers,
-            stream: byte_stream,
-        })
+            stream: single,
+        };
+    }
+
+    let byte_stream = response
+        .bytes_stream()
+        .map(|chunk| chunk.map_err(map_reqwest_body_error))
+        .boxed();
+
+    PassthroughResponse {
+        status,
+        headers,
+        stream: byte_stream,
     }
 }
 

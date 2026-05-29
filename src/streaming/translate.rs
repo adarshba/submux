@@ -19,8 +19,8 @@ use ulid::Ulid;
 
 use crate::streaming::anthropic_events::{AnthropicBlockStart, AnthropicDelta, AnthropicEvent};
 use crate::streaming::openai_chunks::{
-    chat_completion_chunk, OpenAiChatChunk, OpenAiChoice, OpenAiDelta, OpenAiFunctionDelta,
-    OpenAiToolCallDelta,
+    OpenAiChatChunk, OpenAiChoice, OpenAiDelta, OpenAiFunctionDelta, OpenAiToolCallDelta,
+    chat_completion_chunk,
 };
 
 #[derive(Debug)]
@@ -448,30 +448,33 @@ mod tests {
     fn thinking_is_dropped() {
         let mut t = AnthropicToOpenAiTranslator::new(None);
         let _ = t.ingest(msg_start("m"));
-        assert!(t
-            .ingest(AnthropicEvent::ContentBlockStart {
+        assert!(
+            t.ingest(AnthropicEvent::ContentBlockStart {
                 index: 1,
                 content_block: AnthropicBlockStart::Thinking {
                     thinking: "internal".into()
                 }
             })
-            .is_empty());
-        assert!(t
-            .ingest(AnthropicEvent::ContentBlockDelta {
+            .is_empty()
+        );
+        assert!(
+            t.ingest(AnthropicEvent::ContentBlockDelta {
                 index: 1,
                 delta: AnthropicDelta::ThinkingDelta {
                     thinking: "more".into()
                 }
             })
-            .is_empty());
-        assert!(t
-            .ingest(AnthropicEvent::ContentBlockDelta {
+            .is_empty()
+        );
+        assert!(
+            t.ingest(AnthropicEvent::ContentBlockDelta {
                 index: 1,
                 delta: AnthropicDelta::SignatureDelta {
                     signature: "sig".into()
                 }
             })
-            .is_empty());
+            .is_empty()
+        );
     }
 
     #[test]

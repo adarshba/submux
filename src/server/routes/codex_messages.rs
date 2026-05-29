@@ -7,12 +7,12 @@
 //! Anthropic error envelope — the client only speaks Anthropic.
 
 use axum::{
+    Router,
     body::Body,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::Response,
     routing::post,
-    Router,
 };
 use bytes::Bytes;
 use chrono::Utc;
@@ -24,7 +24,7 @@ use crate::protocols::anthropic::translate_to_responses::anthropic_to_responses_
 use crate::providers::codex::current as current_codex;
 use crate::server::app::AppState;
 use crate::server::responses::{
-    anthropic_error_response, record_terminal_metric, sniff_model_hint,
+    anthropic_error_response, consumer_from_headers, record_terminal_metric, sniff_model_hint,
 };
 use crate::streaming::relay;
 use crate::streaming::translate_responses_to_anthropic::ResponsesToAnthropicTranslator;
@@ -43,13 +43,14 @@ async fn handle_codex_messages(
 ) -> Response {
     let started = Instant::now();
     let request_id = tracer::new_request_id();
+    let consumer = consumer_from_headers(&headers);
     let model_group = sniff_model_hint(&body).unwrap_or_else(|| "unknown".to_owned());
 
     let translated_body = match anthropic_to_responses_body(&body) {
         Ok(b) => b,
         Err(err) => {
             tracing::warn!(error = %err, "anthropic→responses translate failed");
-            record_terminal_metric(PROVIDER, &model_group, "bad_request", started);
+            record_terminal_metric(PROVIDER, &model_group, "bad_request", &consumer, started);
             return anthropic_error_response(
                 StatusCode::BAD_REQUEST,
                 &format!("invalid Anthropic Messages body: {err}"),
@@ -58,7 +59,7 @@ async fn handle_codex_messages(
     };
 
     let Some(proxy) = current_codex() else {
-        record_terminal_metric(PROVIDER, &model_group, "no_proxy", started);
+        record_terminal_metric(PROVIDER, &model_group, "no_proxy", &consumer, started);
         return anthropic_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "codex proxy not installed",
@@ -67,7 +68,7 @@ async fn handle_codex_messages(
 
     let accounts = state.pool.by_provider(ProviderKind::OpenAiSubscription);
     let Some(account) = accounts.into_iter().next() else {
-        record_terminal_metric(PROVIDER, &model_group, "no_account", started);
+        record_terminal_metric(PROVIDER, &model_group, "no_account", &consumer, started);
         return anthropic_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
             "no OpenAI subscription account registered — set SUBMUX_OPENAI_ACCESS_TOKEN at startup",
@@ -75,7 +76,13 @@ async fn handle_codex_messages(
     };
 
     let Some((access_token, cookies, device_id)) = account.openai_credentials() else {
-        record_terminal_metric(PROVIDER, &model_group, "wrong_credential_kind", started);
+        record_terminal_metric(
+            PROVIDER,
+            &model_group,
+            "wrong_credential_kind",
+            &consumer,
+            started,
+        );
         return anthropic_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "account is not an OpenAI subscription account",
@@ -101,7 +108,7 @@ async fn handle_codex_messages(
         Ok(p) => p,
         Err(err) => {
             tracing::warn!(request_id = %request_id, error = %err, "codex passthrough failed");
-            record_terminal_metric(PROVIDER, &model_group, "upstream_error", started);
+            record_terminal_metric(PROVIDER, &model_group, "upstream_error", &consumer, started);
             return anthropic_error_response(
                 StatusCode::BAD_GATEWAY,
                 &format!("upstream error: {err}"),
@@ -114,6 +121,7 @@ async fn handle_codex_messages(
         PROVIDER,
         &model_group,
         &status.as_u16().to_string(),
+        &consumer,
         started,
     );
 

@@ -5,8 +5,8 @@
 //! result. Built on `futures::future::Shared` keyed by `AccountId`.
 
 use dashmap::DashMap;
-use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use std::sync::Arc;
 
 use crate::core::{AccountId, AdapterError};

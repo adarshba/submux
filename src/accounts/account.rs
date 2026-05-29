@@ -2,8 +2,8 @@ use arc_swap::ArcSwapOption;
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use tokio::sync::{Mutex, Semaphore};
 use uuid::Uuid;
 
