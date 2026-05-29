@@ -60,14 +60,15 @@ src/
 │   │   └── panic_catch.rs        Panic → typed JSON 500.
 │   └── routes/
 │       ├── messages.rs           POST /v1/messages
+│       ├── models.rs             GET /v1/models, /v1/models/:model
 │       ├── chat.rs               POST /v1/chat/completions
 │       ├── codex.rs              POST /codex/responses
 │       ├── codex_messages.rs     POST /codex/v1/messages
-│       ├── health.rs             GET /health, /ready
+│       ├── health.rs             GET /, /health, /ready
 │       └── metrics.rs            GET /metrics (Prometheus text)
 ├── telemetry/
-│   ├── metrics.rs                Registry + typed helpers.
-│   ├── tracer.rs                 new_request_id() + OTel stub.
+│   ├── metrics.rs                OTel meter/instruments + record_* helpers.
+│   ├── tracer.rs                 new_request_id() + OTel trace stub.
 │   └── exporters/prometheus.rs   GET /metrics handler.
 └── constants/
     ├── http_headers.rs
@@ -112,9 +113,10 @@ provider through `AppState`; nothing skips the proxy layer.
    (`ANTHROPIC_BASE_URL=http://submux/codex`) speak to a ChatGPT
    subscription end to end.
 
-Health: `routes/health.rs` (`/health`, `/ready`). Metrics:
-`routes/metrics.rs` (`/metrics`, Prometheus text exposition). These three
-stay open even when the inbound API key gate is enabled.
+Status/health: `routes/health.rs` (`/`, `/health`, `/ready`). Metrics:
+`routes/metrics.rs` (`/metrics`, Prometheus text exposition). These stay
+open even when the inbound API key gate is enabled. `routes/models.rs`
+(`/v1/models`, `/v1/models/:model`) is gated like the other `/v1/*` routes.
 
 ## Configuration
 
@@ -233,15 +235,21 @@ nothing.
 
 ## Telemetry
 
-- **Metrics** (`telemetry/metrics.rs`) — Hand-rolled counters and
-  histograms. `submux_requests_total{protocol, model_group, status}` is
-  the canonical request counter;
-  `submux_request_duration_seconds` is the histogram. The exporter
-  renders Prometheus text in `telemetry/exporters/prometheus.rs`.
+- **Metrics** (`telemetry/metrics.rs`) — built on the OpenTelemetry SDK.
+  `metrics::init` (called from `main.rs`) installs one `SdkMeterProvider`
+  with two readers: an OTLP/HTTP push exporter (enabled when
+  `SUBMUX_OTLP_ENDPOINT` is set) and an `opentelemetry-prometheus` reader
+  that backs `GET /metrics` (`telemetry/exporters/prometheus.rs`). Routes
+  call the `telemetry::metrics::record_*` helpers; instruments are named so
+  Prometheus output is `submux_requests_total{protocol,model_group,status,consumer}`,
+  `submux_request_duration_seconds`, `submux_tokens_total{consumer,direction,model}`,
+  `submux_refresh_attempts_total`, and the `submux_account_*` gauges.
+  `consumer` is the inbound `X-Proxy-User-Id` identity (see `core::ConsumerId`);
+  token usage is metered off the `/v1/messages` SSE stream by
+  `streaming/usage_tap.rs`.
 - **Tracer** (`telemetry/tracer.rs`) — `new_request_id()` returns a
-  ULID-formatted string for log correlation. OpenTelemetry init is a
-  stub today; structured `tracing` lines already flow into OpenObserve /
-  Grafana Loki / similar via stdout/stderr.
+  ULID-formatted string for log correlation. OpenTelemetry *trace* export is
+  still a stub; structured `tracing` lines flow to stdout/stderr.
 
 There is no event bus. Routes call `telemetry::metrics::record_*`
 directly.
@@ -250,7 +258,7 @@ directly.
 
 `build_app` splits routes into two groups:
 
-- **Open**: `/health`, `/ready`, `/metrics`.
+- **Open**: `/`, `/health`, `/ready`, `/metrics`.
 - **Gated**: every `/v1/*` and `/codex/*` route. The
   `require_api_key` middleware is applied here when `AppState::api_key`
   is `Some`.
