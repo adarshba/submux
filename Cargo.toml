@@ -1,11 +1,14 @@
 [package]
 name = "submux"
-version = "0.0.3"
+version = "0.0.5"
 edition = "2021"
 rust-version = "1.78"
 license = "Apache-2.0"
-description = "Subscription-native LLM gateway (Claude Max, ChatGPT Plus, future session providers)"
+description = "Subscription-native LLM gateway: Anthropic Claude Max + ChatGPT Codex"
 readme = "README.md"
+repository = "https://github.com/adarshba/submux"
+homepage = "https://github.com/adarshba/submux"
+documentation = "https://github.com/adarshba/submux/blob/main/docs/architecture.md"
 keywords = ["llm", "gateway", "proxy", "anthropic", "openai"]
 categories = ["api-bindings", "web-programming::http-server"]
 
@@ -16,15 +19,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "submux"
 path = "src/main.rs"
-
-[features]
-default = []
-# Enable the Redis-backed cross-replica coordinator. The actual `redis`
-# crate dependency is intentionally NOT declared here: turning on this
-# feature today only unlocks the placeholder module in
-# `src/coordination/redis.rs`. Adding the dep and writing the real impl
-# is left to whoever first needs multi-replica deployment.
-redis = []
 
 [dependencies]
 # async runtime
@@ -78,9 +72,11 @@ sha2 = "0.10"
 url = { version = "2", features = ["serde"] }
 once_cell = "1"
 
-# storage (Phase 10)
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "macros"] }
-base64 = "0.22"
+# cli + config + tty
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+directories = "5"
+is-terminal = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

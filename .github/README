@@ -1,183 +1,140 @@
 SUBMUX
 
-subscription multiplexer
-One gateway. Many sessions. Zero API keys.
+subscription LLM gateway
+One binary. Two upstreams. Zero pasted tokens.
 
 WHAT IS SUBMUX?
 
-Submux is a subscription-native LLM gateway in Rust. It treats accounts —
-Claude Max sessions, ChatGPT Plus sessions, future session-oriented
-providers — as the first-class primitive, not API keys.
+Submux is a small Rust HTTP gateway that proxies your Anthropic Claude Max
+and ChatGPT Codex *subscriptions* to standard SDK clients. You log in once
+with the official CLIs (`claude login` / `codex login`), run `submux`, and
+point Claude Code, Cursor, or any OpenAI/Anthropic SDK at it.
 
-Think of it as Envoy for AI subscriptions: a protocol-aware data plane that
-terminates client traffic in Anthropic Messages or OpenAI Chat format,
-picks a healthy account from a pool of session-backed credentials, and
-forwards (or translates) the request upstream with byte-level preservation
-of provider-native semantics.
+It is not an API-key gateway. It does not multiplex many accounts. It does
+not need a database. It is a single process that brokers one account per
+provider with the right headers, cloaking, and OAuth refresh handling so
+session-mode clients keep working through SDKs that only know API keys.
 
 WHY
 
-Existing gateways (LiteLLM, Neurolink) assume the unit of capacity is an
-API key. Subscriptions are different: they have sessions, refresh tokens,
-cookie jars, device fingerprints, OAuth flows, per-account rate limits,
-and per-account cooldowns. Stuffing them into an API-key abstraction loses
-half the information that matters.
-
-Submux is built bottom-up around the Account aggregate, not around the API
-key.
+Standard SDKs assume the unit of capacity is an API key. Subscriptions are
+different: OAuth tokens with short TTLs, refresh flows, fingerprint
+headers, the OAuth body cloak Claude Code uses. Stuffing that into "set
+ANTHROPIC_API_KEY=…" loses too much. Submux carries the session model
+end-to-end so the client never has to.
 
 FEATURES
 
-- Anthropic Messages and OpenAI Chat protocols on the inbound side
-- Anthropic Messages as the canonical internal shape (lossless thinking
-  blocks, prompt cache markers, tool_use signatures)
-- Stateful Account aggregate: access token, refresh token, cookie jar,
-  device id, expiry, per-account refresh mutex, last_429_at
-- Singleflight refresh to avoid stampeding the refresh endpoint
-- Per-account cooldown with Moka L1 plus optional Redis L2
-- Three-tier fallback chain (generic, context_window, content_policy)
-- Retry with jittered backoff (something Neurolink and LiteLLM both miss)
-- Zero-copy SSE tee: client bytes leave the wire before telemetry parses
-- Streaming-aware mid-stream failover via checkpoint cursor
-- OAuth body cloaking with the Claude Code client id and Stainless headers
-- SecretBox for refresh tokens (XChaCha20-Poly1305, not XOR)
-- OpenTelemetry traces and Prometheus metrics out of the box
+- `/v1/messages` byte-for-byte passthrough to api.anthropic.com with the
+  Claude Code OAuth body cloak, Stainless headers, and the
+  `anthropic-beta: oauth-2025-04-20` tag. Refresh-on-401 with singleflight.
+- `/v1/chat/completions` translation: OpenAI Chat Completions in,
+  Anthropic Messages SSE out, OpenAI streaming chunks (or buffered
+  `chat.completion`) back to the client.
+- `/codex/responses` passthrough to chatgpt.com/backend-api/codex with the
+  Codex CLI fingerprint and JWT bearer.
+- `/codex/v1/messages` Anthropic Messages in, Codex Responses out — lets
+  Claude Code (`ANTHROPIC_BASE_URL=http://submux/codex`) drive a ChatGPT
+  subscription end to end.
+- Auto-discovers credentials from where the official CLIs already store
+  them: macOS Keychain item `Claude Code-credentials` or
+  `~/.claude/.credentials.json`, and `~/.codex/auth.json`.
+- Optional inbound API key gate (`api_key` in the TOML, or
+  `SUBMUX_API_KEY`) with constant-time verification. Disabled by default;
+  routes are open on `127.0.0.1` only.
+- Prometheus `/metrics` endpoint and structured `tracing` logs so
+  OpenObserve, Grafana Loki, etc. ingest the request stream out of the
+  box.
 
 SETUP
 
-1. Install
+1. Log in with the official CLIs (one-time)
+
+   claude login    # stores in macOS Keychain or ~/.claude/.credentials.json
+   codex login     # stores in ~/.codex/auth.json
+
+   Skip whichever provider you don't intend to proxy.
+
+2. Install and run
 
    cargo install submux
-
-   Requires Rust. Get it at https://rustup.rs — one command, a few minutes.
-
-2. Get your tokens
-
-   Submux uses your existing Claude Max and/or ChatGPT Plus subscriptions.
-   You copy a token out of your browser. No coding required.
-
-   What is the Network tab?
-   It is a panel built into every browser that shows requests your browser
-   makes in the background. You only need to find one value in it.
-
-   --- Anthropic (Claude Max) ---
-
-   a. Go to claude.ai in Chrome or Firefox. Log in.
-   b. Open Developer Tools:
-        Mac:          Cmd + Option + I
-        Windows/Linux: F12
-   c. Click the Network tab at the top of the panel.
-   d. Send any message in Claude (e.g. "hi").
-   e. In the Network panel, click a request that contains api.anthropic.com.
-   f. Click the Headers tab in the side panel that opens.
-   g. Under Request Headers, find the line starting with authorization:
-   h. It looks like:  Bearer sk-ant-oat01-...
-      Copy everything after "Bearer " (not including the space).
-      That is your SUBMUX_ANTHROPIC_OAUTH_TOKEN.
-   i. Optional: look through the same request's headers and the Response
-      Headers tab for any value starting with sk-ant-ort01-...
-      If found, that is your SUBMUX_ANTHROPIC_OAUTH_REFRESH_TOKEN.
-      It lets submux renew your session automatically when it expires.
-
-   --- Codex (ChatGPT Plus) ---
-
-   a. Go to chatgpt.com. Log in.
-   b. Open Developer Tools (Cmd + Option + I / F12).
-   c. Click the Network tab.
-   d. Send any message in ChatGPT.
-   e. Find a request whose URL contains chatgpt.com/backend-api. Click it.
-   f. Click the Headers tab in the side panel.
-   g. Under Request Headers, find authorization:
-   h. Copy everything after "Bearer ". That is your SUBMUX_OPENAI_ACCESS_TOKEN.
-
-3. Export your tokens
-
-   Paste the values you copied into your terminal. You only need the
-   sections for the providers you use.
-
-   export SUBMUX_ANTHROPIC_OAUTH_TOKEN="sk-ant-oat01-..."
-   export SUBMUX_ANTHROPIC_OAUTH_REFRESH_TOKEN="sk-ant-ort01-..."   # optional
-
-   export SUBMUX_OPENAI_ACCESS_TOKEN="eyJhbGciOi..."   # Codex only
-
-   Or copy .env.example to .env, fill in your values, then: source .env
-
-4. Run
-
    submux
 
-   Binds to 127.0.0.1:8080 by default.
-   Override: SUBMUX_BIND=0.0.0.0:9000 submux
+   Requires Rust. Get it at https://rustup.rs
 
-5. Point your client at it
+   First boot writes a config skeleton to ~/.config/submux/config.toml
+   (mode 0600), discovers your CLI credentials, prints a banner, and
+   serves the proxy on http://127.0.0.1:8080.
 
-   Claude Code (Claude Max):        ANTHROPIC_BASE_URL=http://127.0.0.1:8080
-   OpenAI-compatible client:        base_url=http://127.0.0.1:8080
-   Claude Code (ChatGPT Plus):      ANTHROPIC_BASE_URL=http://127.0.0.1:8080/codex
+3. Point your client at it
+
+   Claude Code (Claude Max):     ANTHROPIC_BASE_URL=http://127.0.0.1:8080
+   OpenAI-compatible client:     base_url=http://127.0.0.1:8080
+   Claude Code (ChatGPT Codex):  ANTHROPIC_BASE_URL=http://127.0.0.1:8080/codex
+
+4. Optional — lock the proxy down
+
+   Edit ~/.config/submux/config.toml and set api_key to any non-empty
+   string. Then point your client's *_API_KEY at the same value. The
+   gate uses Authorization: Bearer or x-api-key, constant-time. Health,
+   readiness, and /metrics stay open.
+
+CLI
+
+   submux                       run the proxy (the only verb)
+   submux --config <path>       use a config file outside the XDG default
+   submux -q | -v               warn-only or debug logging
+   submux --help / --version
+
+To inspect or rotate config values, edit the TOML directly and restart.
 
 TECH STACK
 
-Core
-
-- Rust (stable, edition 2021)
-- tokio 1.42 async runtime
-- axum 0.7 inbound server
-- reqwest 0.12 outbound HTTP plus per-account cookie jars
-- arc-swap, dashmap, moka, parking_lot for hot-path concurrency
-- chacha20poly1305, zeroize for credential sealing
-- tracing, tracing-subscriber for structured logs
-
-Optional
-
-- Postgres or SQLite for AccountStore
-- Redis for cross-replica cooldown and refresh coordination
-- OpenTelemetry collector for traces and metrics
+- Rust 2021, single library + binary crate
+- tokio 1.42 + axum 0.7 inbound
+- reqwest 0.12 outbound with per-request cookie jars
+- arc-swap, dashmap, moka, parking_lot for hot-path state
+- chacha20poly1305-shaped api key compare via sha2 (constant-time)
+- tracing + tracing-subscriber + hand-rolled Prometheus exporter
 
 PROJECT STRUCTURE
 
-A single crate with internal modules.
+   src/
+   ├── lib.rs              module roots + re-exports
+   ├── main.rs             binary entry (parse → resolve → seed → serve)
+   ├── cli.rs              clap flags (--config, -q, -v)
+   ├── core/               canonical types (no I/O)
+   ├── config/             TOML file + env resolver → Settings + auto-discovery
+   ├── accounts/           Account pool, refresh, cookie jar, cooldown, discovery
+   ├── providers/anthropic AnthropicProxy + cloak + headers + oauth + quota
+   ├── providers/codex     CodexProxy + ChatGPT session + cookies
+   ├── protocols/          Anthropic ↔ OpenAI translation, collapse, parse
+   ├── streaming/          SSE parser/emitter, relay state machine
+   ├── telemetry/          metrics registry + Prometheus exporter + tracer ids
+   ├── server/             axum app, middleware (request-id, auth, panic),
+   │                       routes (messages, chat, codex, codex_messages,
+   │                       health, metrics), banner, shutdown
+   └── constants/          header names, upstream paths, user agents, limits
 
-src/
-├── lib.rs           module roots + re-exports
-├── main.rs          binary entry (tokio + config + serve)
-├── core/            types and traits, no I/O
-├── protocols/       Anthropic + OpenAI inbound/outbound
-├── providers/       outbound provider adapters
-├── router/          scheduler, strategies, cooldown, retry
-├── accounts/        Account pool, refresh, cookie jar, quota
-├── streaming/       SSE parser, tee, translate, checkpoint
-├── telemetry/       OTel tracer, metrics, event channel
-├── storage/         AccountStore, SecretBox, keyring
-├── config/          figment loader (file + env + CLI)
-└── server/          axum app, routes, middleware
-
-See ARCHITECTURE.md for the full design, source-level analysis of the two
-reference implementations, request and streaming lifecycle diagrams, and
-the MVP and production hardening plans.
+See docs/architecture.md for the full request path and module map.
 
 DEVELOPMENT (contributors)
 
-Check the workspace:
+   cargo check
+   cargo fmt --all -- --check
+   cargo clippy --all-targets -- -D warnings
+   cargo test --lib
+   cargo build --release
 
-cargo check
-
-Build a release binary:
-
-cargo build --release
-
-Run tests and lints:
-
-cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test --lib
+The verify chain must pass before merge.
 
 DESIGN PHILOSOPHY
 
-Submux is built around three ideas:
-
-- accounts, not keys
-- bytes, not tokens, on the fast path
-- failure is the steady state, retry it with jitter
-
-Minimal protocol mutation. Clear module seams. No god-objects.
+- Subscriptions, not API keys, on the credential side.
+- Bytes, not parsed tokens, on the fast path.
+- Auto-discover before asking the user to paste anything.
+- One concept per file; types in their own files; method-first APIs.
+- No dead modules. If it isn't on the request path, it isn't here.
 
 DISCLAIMER
 
@@ -188,6 +145,3 @@ you own and within each provider's terms of service.
 LICENSE
 
 Apache-2.0
-
-"One gateway. Many sessions. Zero API keys."
-

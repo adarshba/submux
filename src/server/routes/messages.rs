@@ -1,3 +1,5 @@
+//! `POST /v1/messages` — Anthropic Messages passthrough.
+
 use axum::{
     body::Body,
     extract::State,
@@ -14,14 +16,13 @@ use std::time::Instant;
 use crate::accounts::refresh::RefreshOutcome;
 use crate::accounts::Account;
 use crate::core::ProviderKind;
-use crate::providers::anthropic::adapter::PassthroughResponse;
 use crate::providers::anthropic::oauth::{exchange_refresh_token, RefreshedTokens};
 use crate::providers::anthropic::quota::{apply_quota, parse_quota_headers};
+use crate::providers::anthropic::PassthroughResponse;
 use crate::server::app::AppState;
 use crate::server::responses::{
     anthropic_error_response, record_terminal_metric, sniff_model_hint,
 };
-use crate::telemetry::events::RequestEvent;
 use crate::telemetry::{metrics, tracer};
 
 const PROVIDER: &str = "anthropic";
@@ -38,14 +39,7 @@ async fn handle_messages(
     let started = Instant::now();
     let request_id = tracer::new_request_id();
     let model_hint = sniff_model_hint(&body);
-    let model_group = model_hint.clone().unwrap_or_else(|| "unknown".to_owned());
-
-    state.events.publish(RequestEvent::Accepted {
-        request_id: request_id.clone(),
-        protocol: "anthropic".to_owned(),
-        model_hint: model_hint.clone(),
-        timestamp: Utc::now(),
-    });
+    let model_group = model_hint.unwrap_or_else(|| "unknown".to_owned());
 
     let accounts = state.pool.by_provider(ProviderKind::AnthropicSubscription);
     let Some(account) = accounts.into_iter().next() else {
@@ -63,18 +57,6 @@ async fn handle_messages(
         );
     };
 
-    state.events.publish(RequestEvent::AccountPicked {
-        request_id: request_id.clone(),
-        account_id: account.id,
-        provider: "anthropic".to_owned(),
-        timestamp: Utc::now(),
-    });
-    state.events.publish(RequestEvent::UpstreamStart {
-        request_id: request_id.clone(),
-        account_id: account.id,
-        timestamp: Utc::now(),
-    });
-
     let mut passthrough = match state
         .anthropic
         .passthrough(&headers, body.clone(), &token)
@@ -85,13 +67,7 @@ async fn handle_messages(
             p
         }
         Err(err) => {
-            state.events.publish(RequestEvent::UpstreamError {
-                request_id,
-                account_id: Some(account.id),
-                error: err.to_string(),
-                timestamp: Utc::now(),
-            });
-            tracing::warn!(error = %err, "anthropic passthrough failed");
+            tracing::warn!(request_id = %request_id, error = %err, "anthropic passthrough failed");
             record_terminal_metric(PROVIDER, &model_group, "upstream_error", started);
             return anthropic_error_response(
                 StatusCode::BAD_GATEWAY,
@@ -105,11 +81,6 @@ async fn handle_messages(
         match refresh_account(&state, &account).await {
             Ok(new_token) => {
                 token = new_token;
-                state.events.publish(RequestEvent::UpstreamStart {
-                    request_id: request_id.clone(),
-                    account_id: account.id,
-                    timestamp: Utc::now(),
-                });
                 match state.anthropic.passthrough(&headers, body, &token).await {
                     Ok(retry) => {
                         apply_quota(
@@ -121,12 +92,6 @@ async fn handle_messages(
                         passthrough = retry;
                     }
                     Err(err) => {
-                        state.events.publish(RequestEvent::UpstreamError {
-                            request_id,
-                            account_id: Some(account.id),
-                            error: err.to_string(),
-                            timestamp: Utc::now(),
-                        });
                         record_terminal_metric(PROVIDER, &model_group, "upstream_error", started);
                         return anthropic_error_response(
                             StatusCode::BAD_GATEWAY,
@@ -142,15 +107,6 @@ async fn handle_messages(
     }
 
     let status = passthrough.status;
-    state.events.publish(RequestEvent::UpstreamComplete {
-        request_id,
-        account_id: account.id,
-        status: status.as_u16(),
-        latency_ms: started.elapsed().as_millis() as u64,
-        input_tokens: None,
-        output_tokens: None,
-        timestamp: Utc::now(),
-    });
     record_terminal_metric(
         PROVIDER,
         &model_group,
@@ -183,7 +139,6 @@ async fn refresh_account(state: &AppState, account: &Arc<Account>) -> Result<Str
     let http = Arc::clone(&state.http);
     let account_clone = Arc::clone(account);
     let acct_id = account.id;
-    let events = Arc::clone(&state.events);
 
     let outcome: Result<RefreshOutcome, _> = state
         .refresh
@@ -194,7 +149,8 @@ async fn refresh_account(state: &AppState, account: &Arc<Account>) -> Result<Str
                 expires_in_seconds,
                 ..
             } = exchange_refresh_token(&http, &refresh_token).await?;
-            let new_expires_at = Utc::now() + ChronoDuration::seconds(expires_in_seconds as i64);
+            let new_expires_at = Utc::now()
+                + ChronoDuration::seconds(i64::try_from(expires_in_seconds).unwrap_or(i64::MAX));
             account_clone.update_anthropic_oauth_token(access_token, new_refresh, new_expires_at);
             Ok(RefreshOutcome {
                 coalesced: false,
@@ -206,22 +162,12 @@ async fn refresh_account(state: &AppState, account: &Arc<Account>) -> Result<Str
     match outcome {
         Ok(_) => {
             metrics::record_refresh_attempt(&acct_id.to_string(), true);
-            events.publish(RequestEvent::RefreshAttempt {
-                account_id: acct_id,
-                success: true,
-                timestamp: Utc::now(),
-            });
             account
                 .anthropic_oauth_token()
                 .ok_or_else(|| "post-refresh token missing".to_owned())
         }
         Err(e) => {
             metrics::record_refresh_attempt(&acct_id.to_string(), false);
-            events.publish(RequestEvent::RefreshAttempt {
-                account_id: acct_id,
-                success: false,
-                timestamp: Utc::now(),
-            });
             Err(e.to_string())
         }
     }

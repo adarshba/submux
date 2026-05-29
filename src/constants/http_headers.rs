@@ -4,6 +4,10 @@ use http::HeaderName;
 
 pub const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
+/// Alternate carrier for the inbound API key. Equivalent to
+/// `Authorization: Bearer <key>`; checked by the inbound auth middleware.
+pub const X_API_KEY: HeaderName = HeaderName::from_static("x-api-key");
+
 /// Header name strings that are stripped from inbound client requests before
 /// proxying upstream. Authorization is rewritten by the adapter; the rest are
 /// either hop-by-hop or fingerprint headers we re-emit ourselves.

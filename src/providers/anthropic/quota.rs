@@ -9,12 +9,12 @@ use http::HeaderMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::accounts::cooldown::{CooldownCache, CooldownReason};
 use crate::accounts::{quota::QuotaSnapshot, Account};
 use crate::constants::http_headers::{
     H_RL_5H_RESET, H_RL_5H_UTIL, H_RL_7D_RESET, H_RL_7D_UTIL, H_RL_FALLBACK, H_RL_STATUS,
 };
 use crate::constants::limits::{COOLDOWN_FALLBACK_SECS, COOLDOWN_UTIL_THRESHOLD};
-use crate::router::cooldown::{CooldownCache, CooldownReason};
 use crate::telemetry::metrics;
 
 fn parse_f32(headers: &HeaderMap, name: &str) -> Option<f32> {
@@ -77,10 +77,10 @@ pub async fn apply_quota(
     let account_id_str = account.id.to_string();
 
     if let Some(util) = snapshot.five_hour_util {
-        metrics::set_account_quota_utilization(&account_id_str, "5h", util as f64);
+        metrics::set_account_quota_utilization(&account_id_str, "5h", f64::from(util));
     }
     if let Some(util) = snapshot.seven_day_util {
-        metrics::set_account_quota_utilization(&account_id_str, "7d", util as f64);
+        metrics::set_account_quota_utilization(&account_id_str, "7d", f64::from(util));
     }
 
     if let (Some(util), Some(reset_at)) = (snapshot.five_hour_util, snapshot.five_hour_reset_at) {
@@ -88,7 +88,7 @@ pub async fn apply_quota(
             let delta = reset_at - Utc::now();
             let dur = delta
                 .to_std()
-                .unwrap_or_else(|_| Duration::from_secs(COOLDOWN_FALLBACK_SECS as u64));
+                .unwrap_or_else(|_| Duration::from_secs(COOLDOWN_FALLBACK_SECS));
             cooldown
                 .cool(account.id, CooldownReason::QuotaExhausted, dur, None)
                 .await;

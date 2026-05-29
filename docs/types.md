@@ -18,18 +18,18 @@ If a third-party crate forces an unsafe boundary, isolate it in one function, do
 
 Domain types live in `src/core/`:
 
-- `core/account.rs` — `AccountId`, `ProviderKind`.
+- `core/account.rs` — `AccountHandle`, `AccountId`, `AccountInner`, `ProviderKind`.
+- `core/api_key.rs` — `ApiKey` newtype (constant-time verify, redacted display).
 - `core/session.rs` — `Session`, `Credentials`, `FingerprintProfile`, `SerializedCookieJar`.
-- `core/provider.rs` — `ProviderAdapter` trait, `ProviderHealth`.
-- `core/request.rs` / `response.rs` — `NormalizedRequest`, `ResponseStream`.
-- `core/error.rs` — `AdapterError`, `TransientKind`.
-- `core/protocol.rs` — wire-format enums.
+- `core/request.rs` / `response.rs` / `stream.rs` — `NormalizedRequest`, `NormalizedResponse`, `ResponseStream`.
+- `core/error.rs` — `SubmuxError`, `AdapterError`, `TransientKind`, `ChallengeKind`, `RlScope`.
+- `core/protocol.rs` / `message.rs` — wire-format enums and message shapes.
 
-Per-module types live in `<module>/types.rs` when the module owns shapes its API exposes (request bodies, response wrappers, event payloads). When the type is a single struct and lives next to the function that returns it, keep it in the same file.
+Per-module types live in their own file under the module that owns them (`config/settings.rs`, `accounts/cooldown.rs`, `providers/anthropic/proxy.rs`). Never declare a non-trivial `struct` or `enum` inside a function body — extract to a sibling file and re-export.
 
-Bad: declaring a 20-field `PassthroughResponse` inline in `adapter.rs` and again in `chatgpt_session.rs`.
+Bad: redeclaring `PassthroughResponse` in two adapter files, or defining a streaming state machine `struct State { … }` inline in a route handler.
 
-Good: lift the shared shape into `providers/passthrough.rs` or `core/response.rs` once divergence appears.
+Good: lift the shared shape into a dedicated file (`providers/anthropic/proxy.rs::PassthroughResponse`, `streaming/relay.rs::SseTranslator`).
 
 ## Newtypes vs aliases
 

@@ -175,50 +175,6 @@ impl Account {
             _ => None,
         }
     }
-
-    /// Rehydrate an `Account` from a row loaded out of the persistent store.
-    /// The fingerprint is set to a sensible default for the persisted
-    /// provider kind — providers that need richer fingerprints will
-    /// update it on first use.
-    pub fn from_persisted(p: crate::storage::PersistedAccount) -> Self {
-        let fingerprint = match p.provider {
-            ProviderKind::AnthropicSubscription | ProviderKind::AnthropicApiKey => {
-                FingerprintProfile {
-                    name: "claude-code".to_owned(),
-                    version: "2.1.87".to_owned(),
-                    user_agent: "claude-cli/2.1.87 (external, cli)".to_owned(),
-                    stainless_headers: HashMap::new(),
-                    anthropic_betas: vec!["oauth-2025-04-20".to_owned()],
-                }
-            }
-            ProviderKind::OpenAiSubscription | ProviderKind::OpenAiApiKey => FingerprintProfile {
-                name: "codex-cli".to_owned(),
-                version: "0.30.0".to_owned(),
-                user_agent: "codex-cli/0.30.0 (Mac OS X; arm64)".to_owned(),
-                stainless_headers: HashMap::new(),
-                anthropic_betas: Vec::new(),
-            },
-            ProviderKind::Custom => FingerprintProfile {
-                name: "submux".to_owned(),
-                version: env!("CARGO_PKG_VERSION").to_owned(),
-                user_agent: format!("submux/{}", env!("CARGO_PKG_VERSION")),
-                stainless_headers: HashMap::new(),
-                anthropic_betas: Vec::new(),
-            },
-        };
-        let session = Session {
-            credentials: p.credentials,
-            fingerprint: fingerprint.clone(),
-        };
-        Self {
-            id: p.id,
-            provider: p.provider,
-            display_name: p.display_name,
-            fingerprint: RwLock::new(fingerprint),
-            session: RwLock::new(session),
-            state: Arc::new(AccountState::new(64)),
-        }
-    }
 }
 
 pub struct AccountState {

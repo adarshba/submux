@@ -1,0 +1,34 @@
+# submux config — auto-generated on first run.
+#
+# Tokens are read automatically from the official CLIs:
+#   - Anthropic: macOS Keychain "Claude Code-credentials", or
+#                ~/.claude/.credentials.json on Linux  (after `claude login`)
+#   - Codex:     ~/.codex/auth.json                    (after `codex login`)
+#
+# You only need to touch this file if you want to:
+#   - Lock the proxy down behind an api_key (recommended for non-loopback bind)
+#   - Override which port / interface submux listens on
+#   - Point at a non-default upstream (testing, region routing)
+#   - Inject tokens explicitly without using the CLIs
+
+bind = "127.0.0.1:8080"
+
+# Empty = open mode. Set to any non-empty string to require it on every
+# request via `Authorization: Bearer <key>` or `x-api-key: <key>`. A long
+# random string is recommended; for example: `openssl rand -hex 24`.
+api_key = ""
+
+[anthropic]
+# Overrides auto-discovery. Leave commented to use whatever
+# `claude login` stored in your keychain or ~/.claude/.credentials.json.
+# oauth_token   = "sk-ant-oat01-…"
+# refresh_token = "sk-ant-ort01-…"
+# upstream      = "https://api.anthropic.com"
+
+[openai]
+# Overrides auto-discovery. Leave commented to use whatever
+# `codex login` stored in ~/.codex/auth.json.
+# access_token  = "eyJ…"
+# device_id is auto-generated and kept stable across restarts.
+device_id = "__SUBMUX_DEVICE_ID__"
+# upstream      = "https://chatgpt.com"

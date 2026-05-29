@@ -1,3 +1,5 @@
+//! `POST /codex/responses` — Codex (ChatGPT Plus) passthrough.
+
 use axum::{
     body::Body,
     extract::State,
@@ -12,12 +14,11 @@ use std::time::Instant;
 
 use crate::constants::upstream_paths::CODEX_REFRESH_ENDPOINT;
 use crate::core::{Credentials, ProviderKind};
-use crate::providers::openai::{openai_adapter, CodexPassthroughResponse};
+use crate::providers::codex::{current as current_codex, CodexPassthroughResponse};
 use crate::server::app::AppState;
 use crate::server::responses::{
     anthropic_error_response, record_terminal_metric, sniff_model_hint,
 };
-use crate::telemetry::events::RequestEvent;
 use crate::telemetry::tracer;
 
 const PROVIDER: &str = "openai";
@@ -33,21 +34,13 @@ async fn handle_codex_responses(
 ) -> Response {
     let started = Instant::now();
     let request_id = tracer::new_request_id();
-    let model_hint = sniff_model_hint(&body);
-    let model_group = model_hint.clone().unwrap_or_else(|| "unknown".to_owned());
+    let model_group = sniff_model_hint(&body).unwrap_or_else(|| "unknown".to_owned());
 
-    state.events.publish(RequestEvent::Accepted {
-        request_id: request_id.clone(),
-        protocol: PROVIDER.to_owned(),
-        model_hint: model_hint.clone(),
-        timestamp: Utc::now(),
-    });
-
-    let Some(adapter) = openai_adapter() else {
-        record_terminal_metric(PROVIDER, &model_group, "no_adapter", started);
+    let Some(proxy) = current_codex() else {
+        record_terminal_metric(PROVIDER, &model_group, "no_proxy", started);
         return anthropic_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
-            "openai adapter not installed",
+            "codex proxy not installed",
         );
     };
 
@@ -79,28 +72,10 @@ async fn handle_codex_responses(
         refresh_endpoint,
     };
 
-    state.events.publish(RequestEvent::AccountPicked {
-        request_id: request_id.clone(),
-        account_id: account.id,
-        provider: PROVIDER.to_owned(),
-        timestamp: Utc::now(),
-    });
-    state.events.publish(RequestEvent::UpstreamStart {
-        request_id: request_id.clone(),
-        account_id: account.id,
-        timestamp: Utc::now(),
-    });
-
-    let passthrough = match adapter.codex.passthrough(&headers, body, &creds).await {
+    let passthrough = match proxy.codex.passthrough(&headers, body, &creds).await {
         Ok(p) => p,
         Err(err) => {
-            state.events.publish(RequestEvent::UpstreamError {
-                request_id,
-                account_id: Some(account.id),
-                error: err.to_string(),
-                timestamp: Utc::now(),
-            });
-            tracing::warn!(error = %err, "codex passthrough failed");
+            tracing::warn!(request_id = %request_id, error = %err, "codex passthrough failed");
             record_terminal_metric(PROVIDER, &model_group, "upstream_error", started);
             return anthropic_error_response(
                 StatusCode::BAD_GATEWAY,
@@ -110,15 +85,6 @@ async fn handle_codex_responses(
     };
 
     let status = passthrough.status;
-    state.events.publish(RequestEvent::UpstreamComplete {
-        request_id,
-        account_id: account.id,
-        status: status.as_u16(),
-        latency_ms: started.elapsed().as_millis() as u64,
-        input_tokens: None,
-        output_tokens: None,
-        timestamp: Utc::now(),
-    });
     record_terminal_metric(
         PROVIDER,
         &model_group,

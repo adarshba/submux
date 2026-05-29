@@ -332,8 +332,8 @@ impl Registry {
     }
 
     /// Render the full registry as a Prometheus 0.0.4 text-format snapshot.
-    /// Output is fully sorted (metric name, then label set) so admin tooling
-    /// can diff snapshots without flapping.
+    /// Output is fully sorted (metric name, then label set) so scrape
+    /// tooling can diff snapshots without flapping.
     pub fn render_prometheus(&self) -> String {
         let mut out = String::with_capacity(4096);
 
@@ -447,9 +447,9 @@ fn render_histogram(h: &LabeledHistogram, out: &mut String) {
 /// the magnitudes we emit).
 fn format_float(v: f64) -> String {
     if v.is_finite() && v.fract() == 0.0 && v.abs() < 1e16 {
-        format!("{}", v as i64)
+        format!("{v:.0}")
     } else {
-        format!("{}", v)
+        format!("{v}")
     }
 }
 
@@ -499,7 +499,7 @@ pub fn set_account_quota_utilization(account_id: &str, window: &str, utilization
 pub fn set_account_in_flight(account_id: &str, n: u32) {
     registry()
         .account_in_flight
-        .set(&[("account_id", account_id)], n as f64);
+        .set(&[("account_id", account_id)], f64::from(n));
 }
 
 pub fn add_tokens(account_id: &str, direction: &str, n: u64) {

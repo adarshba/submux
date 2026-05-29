@@ -45,7 +45,7 @@ perf(metrics): avoid string clone in record_request label path
 
 ### Scope
 
-Optional, lowercase, one word. Usually the module touched (`anthropic`, `codex`, `router`, `storage`, `telemetry`). Skip if the change is repo-wide.
+Optional, lowercase, one word. Usually the module touched (`anthropic`, `codex`, `accounts`, `config`, `discovery`, `streaming`, `telemetry`, `server`, `cli`). Skip if the change is repo-wide.
 
 ### Subject
 

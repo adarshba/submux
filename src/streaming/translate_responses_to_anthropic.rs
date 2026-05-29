@@ -60,6 +60,13 @@ enum BlockKind {
     Ignored,
 }
 
+fn output_index_of(payload: &Value) -> Option<u32> {
+    payload
+        .get("output_index")
+        .and_then(Value::as_u64)
+        .and_then(|i| u32::try_from(i).ok())
+}
+
 impl ResponsesToAnthropicTranslator {
     pub fn new() -> Self {
         Self {
@@ -166,10 +173,9 @@ impl ResponsesToAnthropicTranslator {
     }
 
     fn on_output_item_added(&mut self, payload: &Value) -> Vec<Bytes> {
-        let Some(output_index) = payload.get("output_index").and_then(Value::as_u64) else {
+        let Some(output_index) = output_index_of(payload) else {
             return Vec::new();
         };
-        let output_index = output_index as u32;
         let item = match payload.get("item") {
             Some(v) => v,
             None => return Vec::new(),
@@ -218,17 +224,16 @@ impl ResponsesToAnthropicTranslator {
     }
 
     fn on_output_item_done(&mut self, payload: &Value) -> Vec<Bytes> {
-        let Some(output_index) = payload.get("output_index").and_then(Value::as_u64) else {
+        let Some(output_index) = output_index_of(payload) else {
             return Vec::new();
         };
-        self.close_block(output_index as u32)
+        self.close_block(output_index)
     }
 
     fn on_output_text_delta(&mut self, payload: &Value) -> Vec<Bytes> {
-        let Some(output_index) = payload.get("output_index").and_then(Value::as_u64) else {
+        let Some(output_index) = output_index_of(payload) else {
             return Vec::new();
         };
-        let output_index = output_index as u32;
         let delta = payload
             .get("delta")
             .and_then(Value::as_str)
@@ -253,17 +258,16 @@ impl ResponsesToAnthropicTranslator {
     }
 
     fn on_text_finish(&mut self, payload: &Value) -> Vec<Bytes> {
-        let Some(output_index) = payload.get("output_index").and_then(Value::as_u64) else {
+        let Some(output_index) = output_index_of(payload) else {
             return Vec::new();
         };
-        self.close_block(output_index as u32)
+        self.close_block(output_index)
     }
 
     fn on_fc_args_delta(&mut self, payload: &Value) -> Vec<Bytes> {
-        let Some(output_index) = payload.get("output_index").and_then(Value::as_u64) else {
+        let Some(output_index) = output_index_of(payload) else {
             return Vec::new();
         };
-        let output_index = output_index as u32;
         let Some(state) = self.blocks.get(&output_index) else {
             return Vec::new();
         };
@@ -288,10 +292,10 @@ impl ResponsesToAnthropicTranslator {
     }
 
     fn on_fc_args_done(&mut self, payload: &Value) -> Vec<Bytes> {
-        let Some(output_index) = payload.get("output_index").and_then(Value::as_u64) else {
+        let Some(output_index) = output_index_of(payload) else {
             return Vec::new();
         };
-        self.close_block(output_index as u32)
+        self.close_block(output_index)
     }
 
     fn on_response_completed(&mut self, payload: &Value) -> Vec<Bytes> {
@@ -423,6 +427,16 @@ impl ResponsesToAnthropicTranslator {
     fn emit_message_stop(&self) -> Bytes {
         let data = json!({"type": "message_stop"});
         sse("message_stop", &data)
+    }
+}
+
+impl crate::streaming::relay::SseTranslator for ResponsesToAnthropicTranslator {
+    fn ingest(&mut self, event: SseEvent) -> Vec<Bytes> {
+        ResponsesToAnthropicTranslator::ingest(self, event)
+    }
+
+    fn finalize(&mut self) -> Vec<Bytes> {
+        ResponsesToAnthropicTranslator::finalize(self)
     }
 }
 

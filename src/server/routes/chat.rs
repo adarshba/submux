@@ -7,21 +7,22 @@ use axum::{
     Json, Router,
 };
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
-use serde_json::{json, Map, Value};
-use std::collections::VecDeque;
+use futures::StreamExt;
+use serde_json::{json, Value};
 
 use crate::core::{NormalizedRequest, ProviderKind};
-use crate::protocols::openai::emit::{chunk_to_sse, done_marker};
+use crate::protocols::openai::collapse::chunks_to_completion;
+use crate::protocols::openai::emit::done_marker;
 use crate::protocols::openai::parse::parse_chat_body;
 use crate::protocols::openai::translate_in::openai_to_normalized;
-use crate::providers::anthropic::adapter::PassthroughResponse;
+use crate::providers::anthropic::PassthroughResponse;
 use crate::server::app::AppState;
 use crate::server::responses::openai_error_response;
 use crate::streaming::anthropic_events::AnthropicEvent;
 use crate::streaming::openai_chunks::OpenAiChatChunk;
 use crate::streaming::sse_parser::SseStreamParser;
 use crate::streaming::translate::AnthropicToOpenAiTranslator;
+use crate::streaming::{relay, AnthropicToOpenAiRelay};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/v1/chat/completions", post(handle_chat))
@@ -97,7 +98,11 @@ async fn handle_chat(State(state): State<AppState>, headers: HeaderMap, body: By
         return buffer_to_completion(upstream, client_model).await;
     }
 
-    let translated = translate_stream(upstream.stream, Some(client_model));
+    let translated = relay::drive(
+        upstream.stream,
+        AnthropicToOpenAiRelay::new(Some(client_model)),
+        Some(done_marker()),
+    );
 
     let mut builder = Response::builder().status(StatusCode::OK);
     if let Some(h) = builder.headers_mut() {
@@ -196,119 +201,6 @@ fn forward_passthrough_as_is(passthrough: PassthroughResponse) -> Response {
         })
 }
 
-/// Translation streaming pipeline.
-///
-/// Given an Anthropic SSE byte stream, return a stream of OpenAI SSE byte
-/// chunks (ending with `data: [DONE]\n\n`). Implemented as a state machine
-/// driven by `futures::stream::unfold` because the crate does not depend on
-/// `async-stream`.
-///
-/// State variants:
-///   * `Running` — drain upstream, parse SSE, ingest events, yield translated
-///     chunks one at a time from an internal queue.
-///   * `Draining` — upstream ended; emit translator.finalize() chunks, then
-///     `[DONE]`.
-///   * `Done` — terminal; the unfold returns `None`.
-fn translate_stream(
-    upstream: crate::core::ResponseStream,
-    model_override: Option<String>,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
-    struct State {
-        upstream: crate::core::ResponseStream,
-        parser: SseStreamParser,
-        translator: AnthropicToOpenAiTranslator,
-        /// Translated frames waiting to be yielded.
-        pending: VecDeque<Bytes>,
-        phase: Phase,
-    }
-    enum Phase {
-        Running,
-        Draining,
-        Done,
-    }
-
-    let state = State {
-        upstream,
-        parser: SseStreamParser::new(),
-        translator: AnthropicToOpenAiTranslator::new(model_override),
-        pending: VecDeque::new(),
-        phase: Phase::Running,
-    };
-
-    futures::stream::unfold(state, |mut st| async move {
-        loop {
-            if let Some(frame) = st.pending.pop_front() {
-                return Some((Ok(frame), st));
-            }
-            match st.phase {
-                Phase::Done => return None,
-                Phase::Draining => {
-                    for chunk in st.translator.finalize() {
-                        match chunk_to_sse(&chunk) {
-                            Ok(b) => st.pending.push_back(b),
-                            Err(err) => {
-                                tracing::error!(error = %err, "failed to encode finalize chunk");
-                            }
-                        }
-                    }
-                    st.pending.push_back(done_marker());
-                    st.phase = Phase::Done;
-                }
-                Phase::Running => match st.upstream.next().await {
-                    Some(Ok(bytes)) => {
-                        let events = st.parser.push(&bytes);
-                        ingest_events(&mut st.translator, events, &mut st.pending);
-                    }
-                    Some(Err(err)) => {
-                        tracing::warn!(error = %err, "anthropic upstream stream error");
-                        let flushed = st.parser.flush();
-                        ingest_events(&mut st.translator, flushed, &mut st.pending);
-                        st.phase = Phase::Draining;
-                    }
-                    None => {
-                        let flushed = st.parser.flush();
-                        ingest_events(&mut st.translator, flushed, &mut st.pending);
-                        st.phase = Phase::Draining;
-                    }
-                },
-            }
-        }
-    })
-}
-
-/// Helper: feed a batch of SSE events through the translator and push every
-/// resulting OpenAI chunk into the pending queue.
-fn ingest_events(
-    translator: &mut AnthropicToOpenAiTranslator,
-    events: Vec<crate::streaming::sse_parser::SseEvent>,
-    pending: &mut VecDeque<Bytes>,
-) {
-    for ev in events {
-        if ev.data.is_empty() {
-            continue;
-        }
-        let parsed = match AnthropicEvent::from_sse_data(&ev.data) {
-            Ok(p) => p,
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    event = ?ev.event,
-                    "failed to parse anthropic SSE event payload"
-                );
-                continue;
-            }
-        };
-        for chunk in translator.ingest(parsed) {
-            match chunk_to_sse(&chunk) {
-                Ok(b) => pending.push_back(b),
-                Err(err) => {
-                    tracing::error!(error = %err, "failed to encode chat completion chunk");
-                }
-            }
-        }
-    }
-}
-
 /// Drain a successful Anthropic SSE upstream into memory, translate each
 /// event, and collapse the resulting OpenAI streaming chunks into a single
 /// non-streaming ChatCompletion JSON response.
@@ -357,116 +249,8 @@ async fn buffer_to_completion(upstream: PassthroughResponse, model: String) -> R
     all_chunks.extend(translator.finalize());
 
     let request_id = translator.request_id().to_string();
-    let response = collapse_chunks_to_completion(all_chunks, &model, &request_id);
+    let response = chunks_to_completion(&all_chunks, &model, &request_id);
     Json(response).into_response()
-}
-
-/// Fold a sequence of OpenAI streaming chunks into the non-streaming
-/// `chat.completion` JSON shape:
-///
-/// * Text deltas (`choice.delta.content`) on choice index 0 are concatenated
-///   into `message.content`.
-/// * Tool-call deltas are accumulated by their `tool_calls[*].index`:
-///   * `id` and `function.name` are captured the first time they appear.
-///   * `function.arguments` fragments are concatenated into a single string.
-/// * `finish_reason` is taken from the last chunk that supplied one;
-///   defaults to `"stop"` if the upstream never sent one.
-fn collapse_chunks_to_completion(
-    chunks: Vec<OpenAiChatChunk>,
-    model: &str,
-    request_id: &str,
-) -> Value {
-    /// Accumulator for one tool call across many delta chunks.
-    #[derive(Default)]
-    struct AccTool {
-        id: Option<String>,
-        kind: Option<String>,
-        name: Option<String>,
-        arguments: String,
-    }
-
-    let mut content = String::new();
-    let mut tool_calls: std::collections::BTreeMap<u32, AccTool> =
-        std::collections::BTreeMap::new();
-    let mut finish_reason: Option<String> = None;
-    let mut created: i64 = 0;
-
-    for chunk in &chunks {
-        if chunk.created != 0 {
-            created = chunk.created;
-        }
-        for choice in &chunk.choices {
-            if choice.index != 0 {
-                continue;
-            }
-            if let Some(text) = &choice.delta.content {
-                content.push_str(text);
-            }
-            for tc in &choice.delta.tool_calls {
-                let entry = tool_calls.entry(tc.index).or_default();
-                if entry.id.is_none() {
-                    if let Some(id) = &tc.id {
-                        entry.id = Some(id.clone());
-                    }
-                }
-                if entry.kind.is_none() {
-                    entry.kind = Some(tc.kind.clone());
-                }
-                if entry.name.is_none() {
-                    if let Some(name) = &tc.function.name {
-                        entry.name = Some(name.clone());
-                    }
-                }
-                if let Some(args) = &tc.function.arguments {
-                    entry.arguments.push_str(args);
-                }
-            }
-            if let Some(reason) = &choice.finish_reason {
-                finish_reason = Some(reason.clone());
-            }
-        }
-    }
-
-    let mut message = Map::new();
-    message.insert("role".to_string(), Value::String("assistant".to_string()));
-    message.insert("content".to_string(), Value::String(content));
-    if !tool_calls.is_empty() {
-        let arr: Vec<Value> = tool_calls
-            .into_values()
-            .map(|tc| {
-                let mut obj = Map::new();
-                obj.insert("id".to_string(), Value::String(tc.id.unwrap_or_default()));
-                obj.insert(
-                    "type".to_string(),
-                    Value::String(tc.kind.unwrap_or_else(|| "function".to_string())),
-                );
-                let mut func = Map::new();
-                func.insert(
-                    "name".to_string(),
-                    Value::String(tc.name.unwrap_or_default()),
-                );
-                func.insert("arguments".to_string(), Value::String(tc.arguments));
-                obj.insert("function".to_string(), Value::Object(func));
-                Value::Object(obj)
-            })
-            .collect();
-        message.insert("tool_calls".to_string(), Value::Array(arr));
-    }
-
-    let finish_reason = finish_reason.unwrap_or_else(|| "stop".to_string());
-
-    json!({
-        "id": request_id,
-        "object": "chat.completion",
-        "created": created,
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": Value::Object(message),
-            "finish_reason": finish_reason,
-        }],
-        "usage": Value::Null,
-    })
 }
 
 #[cfg(test)]
@@ -518,7 +302,7 @@ mod tests {
             content_chunk("world!"),
             finish_chunk("stop"),
         ];
-        let v = collapse_chunks_to_completion(chunks, "gpt-4o", "chatcmpl-abc");
+        let v = chunks_to_completion(&chunks, "gpt-4o", "chatcmpl-abc");
         assert_eq!(v["object"], "chat.completion");
         assert_eq!(v["id"], "chatcmpl-abc");
         assert_eq!(v["model"], "gpt-4o");
@@ -586,7 +370,7 @@ mod tests {
             finish_reason: None,
         });
         let chunks = vec![start, frag1, frag2, finish_chunk("tool_calls")];
-        let v = collapse_chunks_to_completion(chunks, "gpt-4o", "chatcmpl-xyz");
+        let v = chunks_to_completion(&chunks, "gpt-4o", "chatcmpl-xyz");
         let choice = &v["choices"][0];
         assert_eq!(choice["finish_reason"], "tool_calls");
         assert_eq!(choice["message"]["content"], "");
@@ -604,7 +388,7 @@ mod tests {
     #[test]
     fn collapse_defaults_finish_reason_to_stop_when_missing() {
         let chunks = vec![content_chunk("hi")];
-        let v = collapse_chunks_to_completion(chunks, "gpt-4o", "chatcmpl-d");
+        let v = chunks_to_completion(&chunks, "gpt-4o", "chatcmpl-d");
         assert_eq!(v["choices"][0]["finish_reason"], "stop");
         assert_eq!(v["choices"][0]["message"]["content"], "hi");
     }

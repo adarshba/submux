@@ -16,13 +16,13 @@ Detail behind the quick-reference rules in `CLAUDE.md`. Read the principles, the
 
 Name by responsibility, not by what's inside.
 
-Good: `refresh.rs` (manages refresh-on-401), `cooldown.rs` (per-account cooldown cache), `sealer.rs` (XChaCha20 sealing of credentials).
+Good: `refresh.rs` (manages refresh-on-401), `cooldown.rs` (per-account cooldown cache), `discovery.rs` (read official CLI credential stores).
 
 Bad: `utils.rs`, `account_helpers.rs`, `misc.rs`, `things.rs`.
 
-### Directories — `snake_case/` with a `mod.rs`
+### Directories — `snake_case/` paired with a sibling `snake_case.rs`
 
-Group by concern, not by layer. `providers/anthropic/` not `adapters/oauth/`. The domain noun comes first.
+Modern Rust 2018+ layout: `foo.rs` next to a `foo/` directory; `foo.rs` declares the submodules. No `mod.rs` files. Group by concern, not by layer: `providers/anthropic/` not `adapters/oauth/`. The domain noun comes first.
 
 ### Test files — none
 
@@ -48,9 +48,9 @@ Bad: `res`, `tmp`, `obj`, `data` (when something more specific applies), `x` (ou
 
 ### Types & traits — `PascalCase`
 
-`AccountPool`, `RefreshManager`, `CooldownCache`, `ProviderAdapter`, `ResponseStream`, `AdapterError`.
+`AccountPool`, `RefreshManager`, `CooldownCache`, `AnthropicProxy`, `CodexProxy`, `ResponseStream`, `AdapterError`, `ApiKey`.
 
-Trait names describe a capability: `ProviderAdapter`, `CoordinationBackend`. Avoid `-er` suffixes when a noun fits (`Sealer` is fine because the thing it does is "seal"; `Calculator` for a one-method type is not).
+Trait names describe a capability: `SseTranslator`, `ChunkEncoder`. Avoid `-er` suffixes when a noun fits.
 
 ### Errors — `*Error`
 

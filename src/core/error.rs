@@ -5,26 +5,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SubmuxError {
-    #[error("no healthy account available for model_group `{model_group}`")]
-    NoHealthyAccount { model_group: String },
-
-    #[error("account `{account_id}` requires re-authentication")]
-    NeedsReauth { account_id: String },
-
-    #[error("retry budget exhausted after {attempts} attempt(s)")]
-    RetryExhausted { attempts: u32 },
-
     #[error("protocol parse error: {0}")]
     ProtocolParse(String),
-
-    #[error("translation error: {0}")]
-    Translation(String),
-
-    #[error("storage error: {0}")]
-    Storage(String),
-
-    #[error("config error: {0}")]
-    Config(String),
 
     #[error("internal error: {0}")]
     Internal(String),

@@ -24,35 +24,35 @@ cargo run                  # debug run, reads SUBMUX_* env vars
 
 Read at startup in `src/main.rs`. Missing values are warned, not errors, so the gateway can boot half-configured for local dev.
 
+- `SUBMUX_CONFIG` — override the config file path. Default: `$XDG_CONFIG_HOME/submux/config.toml`.
 - `SUBMUX_BIND` — listen address, default `127.0.0.1:8080`.
+- `SUBMUX_API_KEY` — inbound shared secret. When set, every proxy route requires `Authorization: Bearer <key>` or `x-api-key: <key>`.
 - `SUBMUX_ANTHROPIC_UPSTREAM` — default `https://api.anthropic.com`.
-- `SUBMUX_ANTHROPIC_OAUTH_TOKEN` — seeds one Anthropic account at boot. Without it, `/v1/messages` returns 503.
+- `SUBMUX_ANTHROPIC_OAUTH_TOKEN` — Anthropic OAuth access token. Overrides auto-discovery from the macOS keychain / `~/.claude/.credentials.json`.
 - `SUBMUX_ANTHROPIC_OAUTH_REFRESH_TOKEN` — optional; enables refresh-on-401.
 - `SUBMUX_OPENAI_UPSTREAM` — default `https://chatgpt.com`.
-- `SUBMUX_OPENAI_ACCESS_TOKEN` — seeds one Codex subscription account.
+- `SUBMUX_OPENAI_ACCESS_TOKEN` — Codex bearer. Overrides auto-discovery from `~/.codex/auth.json`.
 - `SUBMUX_OPENAI_COOKIES` — JSON matching `SerializedCookieJar`. Optional; empty jar is allowed.
-- `SUBMUX_OPENAI_DEVICE_ID` — UUID; auto-generated if missing.
-- `SUBMUX_DATABASE_URL` — Postgres URL. If set with `SUBMUX_SEALER_KEY`, persisted accounts load at boot.
-- `SUBMUX_SEALER_KEY` — 32-byte key as hex / base64 / SHA-256-of-passphrase. Required when persisting credentials.
+- `SUBMUX_OPENAI_DEVICE_ID` — UUID; auto-generated and persisted to the config file if missing.
 
-Never commit a real token or `SUBMUX_SEALER_KEY` value. Use `.env` locally; the repo ships only `.env.example`.
+Credential resolution per provider: **env > config file > auto-discovery > none**. Auto-discovery only fires when both env and file are unset; explicit values always win.
+
+Never commit a real token or `SUBMUX_API_KEY` value. Use `.env` locally; the repo ships only `.env.example`.
 
 ## Module map
 
 Defined in `Cargo.toml` as a single library + binary. Module roots are the directories under `src/`:
 
-- `core/` — pure types: `AccountId`, `ProviderKind`, `Credentials`, `Session`, `AdapterError`, `ResponseStream`, request/response shapes.
-- `accounts/` — `Account`, `AccountPool`, `RefreshManager` (singleflight), cookie jar, fingerprint state.
-- `providers/` — outbound adapters. `anthropic/` (OAuth + body cloak) and `openai/` (Codex CLI fingerprint + cookie auth).
-- `protocols/` — wire-format parsers/emitters and OpenAI↔Anthropic translation.
-- `router/` — picks an account, applies cooldowns, retry policy, strategy traits.
-- `streaming/` — SSE parser, emitter, translator state machines.
-- `coordination/` — multi-replica coordination trait + `InMemory` default. `redis` feature is a placeholder.
-- `storage/` — Postgres-backed account store, XChaCha20Poly1305 sealer.
-- `telemetry/` — events bus, hand-rolled Prometheus exposition, tracer ids.
-- `server/` — axum app, middleware (request id, panic catch), routes (`/v1/messages`, `/v1/chat/completions`, `/codex/responses`, `/admin/*`, `/healthz`, `/metrics`).
-- `config/` — config-file plumbing (deferred — env is canonical today).
+- `core/` — pure types: `AccountId`, `ApiKey`, `ProviderKind`, `Credentials`, `Session`, `AdapterError`, `ResponseStream`.
+- `accounts/` — `Account`, `AccountPool`, `RefreshManager` (singleflight), `CooldownCache`, cookie jar, fingerprint state, seeding.
+- `providers/` — outbound proxies. `anthropic/` (`AnthropicProxy` + body cloak) and `codex/` (`CodexProxy` + ChatGPT session + cookie auth).
+- `protocols/` — wire-format parsers/emitters, OpenAI↔Anthropic translation, and chunk-to-completion buffering.
+- `streaming/` — SSE parser, emitter, translators, and the shared relay state machine (`relay::drive`).
+- `telemetry/` — metrics registry, Prometheus exporter, tracer ids.
+- `server/` — axum app, middleware (request id, auth, panic catch), routes (`/v1/messages`, `/v1/chat/completions`, `/codex/responses`, `/codex/v1/messages`, `/health`, `/ready`, `/metrics`), banner, shutdown.
+- `config/` — TOML config file + env resolver → `Settings`.
 - `constants/` — cross-module shared constants by topic.
+- `cli.rs` — clap flags (`--config`, `-q`, `-v`). No subcommands.
 
 ## Forbidden patterns
 
@@ -68,15 +68,15 @@ Hard constraints. Treat each as a compile error.
 - Never declare HTTP header names, upstream paths, or upstream hosts inline. They belong in `src/constants/*.rs` (`http_headers.rs`, `upstream_paths.rs`, `user_agents.rs`).
 - Never declare a struct's full fingerprint / cloak payload inline at a call site. Build it through `providers::*::headers` or a constants module.
 - Never use vague filenames: `utils.rs`, `helpers.rs`, `common.rs`, `misc.rs`, `manager.rs`. Name by responsibility.
-- Never log a token, cookie, or sealer key — even at `tracing::debug!`. Use the `Redacted` newtype if you must reference one.
+- Never log a token, cookie, refresh token, or API key — even at `tracing::debug!`. Use `ApiKey::redacted()` (or the same pattern) when the value must appear in a log line.
 - Never commit `.env`, `target/`, `Cargo.lock` for libraries (we're a binary, lockfile stays).
 
 ## Naming rules
 
 Detail in `docs/naming.md`. Quick reference:
 
-- **Modules / files**: `snake_case.rs`, name by responsibility (`refresh.rs`, `cooldown.rs`, `sealer.rs`).
-- **Types & traits**: `PascalCase` (`AccountPool`, `ProviderAdapter`, `CooldownCache`).
+- **Modules / files**: `snake_case.rs`, name by responsibility (`refresh.rs`, `cooldown.rs`, `discovery.rs`).
+- **Types & traits**: `PascalCase` (`AccountPool`, `AnthropicProxy`, `CooldownCache`).
 - **Functions & methods**: verb-first `snake_case` (`exchange_refresh_token`, `parse_quota_headers`, `cloak_bytes`).
 - **Constants & statics**: `SCREAMING_SNAKE_CASE` (`HOP_BY_HOP_HEADERS`, `CODEX_CLI_USER_AGENT`).
 - **Type parameters**: single capital letter or short PascalCase noun (`T`, `S`, `Stream`, `Backend`).
@@ -84,11 +84,24 @@ Detail in `docs/naming.md`. Quick reference:
 - **Domain noun**: `account` is canonical for "a single upstream identity"; never mix `user` / `session` / `tenant` in new code (a `Session` is *part of* an account, not a synonym).
 - **`*_test.rs` files are forbidden** — Rust uses inline `#[cfg(test)] mod tests` per file.
 
+## Project structure (modern Rust 2018+ layout)
+
+- **No `mod.rs` files in new code.** Use `foo.rs` next to a `foo/` directory; `foo.rs` declares submodules. Only keep `mod.rs` if the file already exists for an unrelated reason.
+- **Organize by domain, not by technical layer.** `accounts/`, `providers/anthropic/`, `streaming/` — not `controllers/`, `services/`, `repositories/`.
+- **Method-first over free functions.** Operations hang off a type (`Settings::load`, `RefreshManager::refresh`). Free functions only for genuinely stateless helpers (a hex encoder, a deterministic byte transform).
+- **One concept per file.** A type definition lives in a file named after it. No inline-defined `struct`/`enum` inside function bodies — extract to a sibling file and re-export.
+- **Re-export from module roots.** Consumers write `use crate::accounts::AccountPool`, not `use crate::accounts::pool::AccountPool`.
+- **Minimize `pub`.** Default to private; promote to `pub(crate)` or `pub` only when an external caller needs it.
+- **Avoid glob imports.** `use crate::accounts::{Account, AccountPool}`, never `use crate::accounts::*`.
+- **`main.rs` stays thin.** Parse args → resolve config → build app → serve. Anything reusable lives in the library.
+- **Target file size**: ≤300 lines ideal, ≤500 lines acceptable. Past 500, split.
+- **No narrowing `as` casts anywhere.** Use `TryFrom`/`try_into` and branch on overflow. Lossless widening uses `From`/`Into` (`f64::from(u32)`, `char::from(u8)`).
+
 ## Comments
 
 Detail in `docs/commenting.md`. Default to no comments. Allowed labels: `TODO`, `FIXME`, `HACK`, `BUG`, `NOTE`, `SAFETY`. One line. Explain _why_, never _what_. No commented-out code — use git.
 
-`///` rustdoc is mandatory on every `pub` item exported from a module root (the module's `mod.rs` re-exports). Internal `pub(crate)` items get rustdoc only when the contract isn't obvious from the signature.
+`///` rustdoc is mandatory on every `pub` item exported from a module root (the `foo.rs` re-exports next to `foo/`). Internal `pub(crate)` items get rustdoc only when the contract isn't obvious from the signature.
 
 `//!` module-level rustdoc is mandatory on every file that defines a non-trivial concept (a state machine, a protocol, an external integration). Skip for re-export shims.
 
@@ -113,16 +126,14 @@ Detail in `docs/architecture.md`. Quick reference:
 - **Constants** referenced by more than one module live in `src/constants/<topic>.rs`. Single-module values stay local as `const`.
 - **State**: `AppState` holds `Arc`-shared singletons. Per-request mutable state is owned by the handler frame. Long-lived per-account state is on `AccountState` (atomics + `ArcSwapOption`).
 - **Failure mode**: every adapter error maps to one of `AdapterError::{Transient, Permanent, Internal}`. Routes translate to HTTP status via `server/responses.rs`, never inline.
-- **No singletons in feature code.** `once_cell::sync::OnceCell` is allowed for process-wide install hooks (`providers::openai::install_openai_adapter`) but not for business state — business state goes through `AppState`.
+- **No singletons in feature code.** `once_cell::sync::OnceCell` is allowed for process-wide install hooks (`providers::codex::install`) but not for business state — business state goes through `AppState`.
 
 ## Outstanding work
 
 Search `TODO` / `FIXME` in the codebase for current items. Known longer-lived ones:
 
-- `providers/openai/chatgpt_session.rs` — sentinel handshake (`/backend-api/sentinel/chat-requirements`) is unimplemented; arkose token is empty. Some Codex request classes will be rejected.
-- `providers/openai/chatgpt_session.rs` — upstream `Set-Cookie` headers are logged but not merged back into the account jar.
-- `coordination/redis.rs` — feature flag is wired but the impl is a stub; multi-replica deployments don't actually coordinate yet.
-- `core::provider::ProviderAdapter::execute` — normalized request path is unimplemented for both adapters. Routes use `passthrough()` directly.
+- `providers/codex/session.rs` — sentinel handshake (`/backend-api/sentinel/chat-requirements`) is deferred. Empty `openai-sentinel-*` headers work for the common request classes; some inputs will hit a 4xx until the handshake contract is reverse-engineered. The upstream Set-Cookie response header is intentionally dropped — submux is a stateless proxy and auto-discovered credentials carry no session cookies.
+- `protocols/anthropic/translate_to_responses.rs` — Anthropic `image` / `document` / `thinking` content blocks are dropped during translation to Codex Responses. Text + tool_use translate cleanly today.
 
 ## Workflow
 

@@ -16,21 +16,18 @@ use axum::{
 };
 use bytes::Bytes;
 use chrono::Utc;
-use futures::{Stream, StreamExt};
-use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::constants::upstream_paths::CODEX_REFRESH_ENDPOINT;
 use crate::core::{Credentials, ProviderKind};
 use crate::protocols::anthropic::translate_to_responses::anthropic_to_responses_body;
-use crate::providers::openai::openai_adapter;
+use crate::providers::codex::current as current_codex;
 use crate::server::app::AppState;
 use crate::server::responses::{
     anthropic_error_response, record_terminal_metric, sniff_model_hint,
 };
-use crate::streaming::sse_parser::SseStreamParser;
+use crate::streaming::relay;
 use crate::streaming::translate_responses_to_anthropic::ResponsesToAnthropicTranslator;
-use crate::telemetry::events::RequestEvent;
 use crate::telemetry::tracer;
 
 const PROVIDER: &str = "openai";
@@ -46,15 +43,7 @@ async fn handle_codex_messages(
 ) -> Response {
     let started = Instant::now();
     let request_id = tracer::new_request_id();
-    let model_hint = sniff_model_hint(&body);
-    let model_group = model_hint.clone().unwrap_or_else(|| "unknown".to_owned());
-
-    state.events.publish(RequestEvent::Accepted {
-        request_id: request_id.clone(),
-        protocol: "anthropic".to_owned(),
-        model_hint: model_hint.clone(),
-        timestamp: Utc::now(),
-    });
+    let model_group = sniff_model_hint(&body).unwrap_or_else(|| "unknown".to_owned());
 
     let translated_body = match anthropic_to_responses_body(&body) {
         Ok(b) => b,
@@ -68,11 +57,11 @@ async fn handle_codex_messages(
         }
     };
 
-    let Some(adapter) = openai_adapter() else {
-        record_terminal_metric(PROVIDER, &model_group, "no_adapter", started);
+    let Some(proxy) = current_codex() else {
+        record_terminal_metric(PROVIDER, &model_group, "no_proxy", started);
         return anthropic_error_response(
             StatusCode::SERVICE_UNAVAILABLE,
-            "openai adapter not installed",
+            "codex proxy not installed",
         );
     };
 
@@ -104,32 +93,14 @@ async fn handle_codex_messages(
         refresh_endpoint,
     };
 
-    state.events.publish(RequestEvent::AccountPicked {
-        request_id: request_id.clone(),
-        account_id: account.id,
-        provider: PROVIDER.to_owned(),
-        timestamp: Utc::now(),
-    });
-    state.events.publish(RequestEvent::UpstreamStart {
-        request_id: request_id.clone(),
-        account_id: account.id,
-        timestamp: Utc::now(),
-    });
-
-    let passthrough = match adapter
+    let passthrough = match proxy
         .codex
         .passthrough(&headers, translated_body, &creds)
         .await
     {
         Ok(p) => p,
         Err(err) => {
-            state.events.publish(RequestEvent::UpstreamError {
-                request_id,
-                account_id: Some(account.id),
-                error: err.to_string(),
-                timestamp: Utc::now(),
-            });
-            tracing::warn!(error = %err, "codex passthrough failed");
+            tracing::warn!(request_id = %request_id, error = %err, "codex passthrough failed");
             record_terminal_metric(PROVIDER, &model_group, "upstream_error", started);
             return anthropic_error_response(
                 StatusCode::BAD_GATEWAY,
@@ -139,15 +110,6 @@ async fn handle_codex_messages(
     };
 
     let status = passthrough.status;
-    state.events.publish(RequestEvent::UpstreamComplete {
-        request_id,
-        account_id: account.id,
-        status: status.as_u16(),
-        latency_ms: started.elapsed().as_millis() as u64,
-        input_tokens: None,
-        output_tokens: None,
-        timestamp: Utc::now(),
-    });
     record_terminal_metric(
         PROVIDER,
         &model_group,
@@ -166,7 +128,11 @@ async fn handle_codex_messages(
         );
     }
 
-    let translated = translate_stream(passthrough.stream);
+    let translated = relay::drive(
+        passthrough.stream,
+        ResponsesToAnthropicTranslator::new(),
+        None,
+    );
 
     let mut builder = Response::builder().status(StatusCode::OK);
     if let Some(h) = builder.headers_mut() {
@@ -189,75 +155,4 @@ async fn handle_codex_messages(
             tracing::error!(error = %e, "failed to build codex messages response body");
             anthropic_error_response(StatusCode::INTERNAL_SERVER_ERROR, "response build failed")
         })
-}
-
-/// Drive the Responses SSE → Anthropic SSE state machine over an upstream
-/// byte stream.
-fn translate_stream(
-    upstream: crate::core::ResponseStream,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
-    struct State {
-        upstream: crate::core::ResponseStream,
-        parser: SseStreamParser,
-        translator: ResponsesToAnthropicTranslator,
-        pending: VecDeque<Bytes>,
-        phase: Phase,
-    }
-    enum Phase {
-        Running,
-        Draining,
-        Done,
-    }
-
-    let state = State {
-        upstream,
-        parser: SseStreamParser::new(),
-        translator: ResponsesToAnthropicTranslator::new(),
-        pending: VecDeque::new(),
-        phase: Phase::Running,
-    };
-
-    futures::stream::unfold(state, |mut st| async move {
-        loop {
-            if let Some(frame) = st.pending.pop_front() {
-                return Some((Ok(frame), st));
-            }
-            match st.phase {
-                Phase::Done => return None,
-                Phase::Draining => {
-                    for b in st.translator.finalize() {
-                        st.pending.push_back(b);
-                    }
-                    st.phase = Phase::Done;
-                }
-                Phase::Running => match st.upstream.next().await {
-                    Some(Ok(bytes)) => {
-                        let events = st.parser.push(&bytes);
-                        for ev in events {
-                            for b in st.translator.ingest(ev) {
-                                st.pending.push_back(b);
-                            }
-                        }
-                    }
-                    Some(Err(err)) => {
-                        tracing::warn!(error = %err, "codex upstream stream error");
-                        for ev in st.parser.flush() {
-                            for b in st.translator.ingest(ev) {
-                                st.pending.push_back(b);
-                            }
-                        }
-                        st.phase = Phase::Draining;
-                    }
-                    None => {
-                        for ev in st.parser.flush() {
-                            for b in st.translator.ingest(ev) {
-                                st.pending.push_back(b);
-                            }
-                        }
-                        st.phase = Phase::Draining;
-                    }
-                },
-            }
-        }
-    })
 }

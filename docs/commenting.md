@@ -90,7 +90,7 @@ Required next to any `unsafe { … }` block. Names the invariant the caller is u
 
 Mandatory for:
 
-- Every `pub` item exported from a module root (`mod.rs` re-exports).
+- Every `pub` item exported from a module root (the `foo.rs` re-exports next to `foo/`).
 - Every `pub trait` and its methods.
 - Every error variant (`#[error("…")]` counts as documentation; expand it when the message alone is ambiguous).
 - Every module file (`//!`) that defines a non-trivial concept — a state machine, an external protocol, a security boundary.
