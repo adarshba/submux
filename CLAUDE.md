@@ -49,7 +49,7 @@ Defined in `Cargo.toml` as a single library + binary. Module roots are the direc
 - `providers/` — outbound proxies. `anthropic/` (`AnthropicProxy` + body cloak) and `codex/` (`CodexProxy` + ChatGPT session + cookie auth).
 - `protocols/` — wire-format parsers/emitters, OpenAI↔Anthropic translation, and chunk-to-completion buffering.
 - `streaming/` — SSE parser, emitter, translators, and the shared relay state machine (`relay::drive`).
-- `telemetry/` — metrics registry, Prometheus exporter, tracer ids.
+- `telemetry/` — OpenTelemetry SDK metrics (OTLP push + Prometheus `/metrics`), tracer ids.
 - `server/` — axum app, middleware (request id, auth, panic catch), routes (`/`, `/v1/messages`, `/v1/models`, `/v1/chat/completions`, `/codex/responses`, `/codex/v1/messages`, `/health`, `/ready`, `/metrics`), banner, shutdown.
 - `config/` — TOML config file + env resolver → `Settings`.
 - `constants/` — cross-module shared constants by topic.

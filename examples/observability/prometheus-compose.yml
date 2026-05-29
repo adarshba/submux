@@ -1,0 +1,6 @@
+# Prometheus for the compose stack: ingests via remote-write from the
+# collector (enabled with --web.enable-remote-write-receiver). No scrape jobs
+# needed — submux pushes OTLP to the collector, which remote-writes here.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s

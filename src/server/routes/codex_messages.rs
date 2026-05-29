@@ -28,6 +28,7 @@ use crate::server::responses::{
 };
 use crate::streaming::relay;
 use crate::streaming::translate_responses_to_anthropic::ResponsesToAnthropicTranslator;
+use crate::streaming::usage_tap::meter_codex_tokens;
 use crate::telemetry::tracer;
 
 const PROVIDER: &str = "openai";
@@ -136,11 +137,8 @@ async fn handle_codex_messages(
         );
     }
 
-    let translated = relay::drive(
-        passthrough.stream,
-        ResponsesToAnthropicTranslator::new(),
-        None,
-    );
+    let metered = meter_codex_tokens(passthrough.stream, consumer, model_group.clone());
+    let translated = relay::drive(metered, ResponsesToAnthropicTranslator::new(), None);
 
     let mut builder = Response::builder().status(StatusCode::OK);
     if let Some(h) = builder.headers_mut() {

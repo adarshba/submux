@@ -77,6 +77,7 @@ The canonical noun for an upstream identity is **`account`**. All new fields, fu
 - `Session` is the part of an `Account` that holds rotating credentials.
 - `Provider` is the upstream service (`AnthropicSubscription`, `OpenAiSubscription`).
 - `Adapter` is the code that talks to a provider.
+- `Consumer` (`ConsumerId`, the inbound `X-Proxy-User-Id`) is the canonical noun for the **calling** client — never a synonym for `account` (which is the upstream identity that serves the consumer).
 
 External shapes (Anthropic's `messages`, OpenAI's `chat/completions`, Codex's `responses`) keep upstream wording — that's an outside contract. Translate at the protocol boundary.
 
