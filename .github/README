@@ -46,8 +46,10 @@ FEATURES
   routes are open on `127.0.0.1` only.
 - OpenTelemetry SDK metrics: OTLP push (set `SUBMUX_OTLP_ENDPOINT`) plus a
   Prometheus `/metrics` scrape endpoint, from one instrument set. Per-consumer
-  usage and token counts keyed on the client `X-Proxy-User-Id` header.
-  Importable Grafana dashboard + collector wiring in `examples/`.
+  usage and token counts (Anthropic + Codex) keyed on the client
+  `X-Proxy-User-Id` header, labelled by protocol/model. A one-command
+  Docker Compose stack (collector + Prometheus + Grafana with the dashboard
+  pre-provisioned) and the dashboard JSON live in `examples/`.
 
 SETUP
 

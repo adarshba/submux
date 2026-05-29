@@ -242,11 +242,12 @@ nothing.
   that backs `GET /metrics` (`telemetry/exporters/prometheus.rs`). Routes
   call the `telemetry::metrics::record_*` helpers; instruments are named so
   Prometheus output is `submux_requests_total{protocol,model_group,status,consumer}`,
-  `submux_request_duration_seconds`, `submux_tokens_total{consumer,direction,model}`,
+  `submux_request_duration_seconds`, `submux_tokens_total{consumer,protocol,direction,model}`,
   `submux_refresh_attempts_total`, and the `submux_account_*` gauges.
   `consumer` is the inbound `X-Proxy-User-Id` identity (see `core::ConsumerId`);
-  token usage is metered off the `/v1/messages` SSE stream by
-  `streaming/usage_tap.rs`.
+  token usage is metered off the Anthropic and Codex SSE streams by
+  `streaming/usage_tap.rs` (`/v1/messages`, `/codex/responses`,
+  `/codex/v1/messages`).
 - **Tracer** (`telemetry/tracer.rs`) — `new_request_id()` returns a
   ULID-formatted string for log correlation. OpenTelemetry *trace* export is
   still a stub; structured `tracing` lines flow to stdout/stderr.

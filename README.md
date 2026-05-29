@@ -45,7 +45,7 @@ That's it — the proxy is now running on `http://127.0.0.1:8080`. On first run 
 The startup banner looks like this:
 
 ```
-submux 0.1.0
+submux 0.2.0
   listening:    http://127.0.0.1:8080
   config:       /Users/you/.config/submux/config.toml  (created on this run)
   api key:      ⚠ open access — anyone on 127.0.0.1:8080 can use this proxy
@@ -111,8 +111,14 @@ claude
 
 submux stamps the value as the `consumer` label on `submux_requests_total` and
 `submux_tokens_total` (a missing or malformed value becomes `consumer="unknown"`).
-An importable Grafana dashboard and collector/scrape wiring live in
-[`examples/`](./examples).
+
+For a one-command stack — OTel Collector + Prometheus + Grafana with the
+dashboard pre-provisioned — see [`examples/`](./examples):
+
+```bash
+docker compose -f examples/observability/compose.yaml up -d
+SUBMUX_OTLP_ENDPOINT=http://localhost:4318 submux   # then open http://localhost:3000
+```
 
 ### CLI reference
 

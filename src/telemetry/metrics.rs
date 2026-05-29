@@ -5,7 +5,7 @@
 //! Surface (Prometheus names):
 //! - `submux_requests_total{protocol,model_group,status,consumer}`
 //! - `submux_request_duration_seconds{protocol,model_group,consumer}`
-//! - `submux_tokens_total{consumer,direction,model}`
+//! - `submux_tokens_total{consumer,protocol,direction,model}`
 //! - `submux_refresh_attempts_total{account_id,result}`
 //! - `submux_account_cooldown_active{account_id}`
 //! - `submux_account_quota_utilization{account_id,window}`
@@ -68,7 +68,7 @@ fn build_instruments(meter: &Meter) -> Instruments {
             .build(),
         tokens: meter
             .u64_counter("submux_tokens")
-            .with_description("Tokens accounted by consumer, direction (input|output), and model.")
+            .with_description("Tokens accounted by consumer, protocol, direction, and model.")
             .build(),
         refresh_attempts: meter
             .u64_counter("submux_refresh_attempts")
@@ -172,8 +172,9 @@ pub fn record_request(
     );
 }
 
-/// Add token usage for a consumer, split by direction (`input`|`output`).
-pub fn add_tokens(consumer: &str, direction: &str, model: &str, n: u64) {
+/// Add token usage for a consumer, split by protocol, direction
+/// (`input`|`output`), and model.
+pub fn add_tokens(consumer: &str, protocol: &str, direction: &str, model: &str, n: u64) {
     let Some(i) = INSTRUMENTS.get() else {
         return;
     };
@@ -181,6 +182,7 @@ pub fn add_tokens(consumer: &str, direction: &str, model: &str, n: u64) {
         n,
         &[
             KeyValue::new("consumer", consumer.to_owned()),
+            KeyValue::new("protocol", protocol.to_owned()),
             KeyValue::new("direction", direction.to_owned()),
             KeyValue::new("model", model.to_owned()),
         ],
@@ -253,6 +255,7 @@ mod tests {
             42,
             &[
                 KeyValue::new("consumer", "usr_test"),
+                KeyValue::new("protocol", "anthropic"),
                 KeyValue::new("direction", "output"),
                 KeyValue::new("model", "claude-opus-4-8"),
             ],

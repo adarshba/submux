@@ -19,6 +19,7 @@ use crate::server::app::AppState;
 use crate::server::responses::{
     anthropic_error_response, consumer_from_headers, record_terminal_metric, sniff_model_hint,
 };
+use crate::streaming::usage_tap::meter_codex_tokens;
 use crate::telemetry::tracer;
 
 const PROVIDER: &str = "openai";
@@ -79,7 +80,7 @@ async fn handle_codex_responses(
         refresh_endpoint,
     };
 
-    let passthrough = match proxy.codex.passthrough(&headers, body, &creds).await {
+    let mut passthrough = match proxy.codex.passthrough(&headers, body, &creds).await {
         Ok(p) => p,
         Err(err) => {
             tracing::warn!(request_id = %request_id, error = %err, "codex passthrough failed");
@@ -99,6 +100,10 @@ async fn handle_codex_responses(
         &consumer,
         started,
     );
+
+    if status.is_success() {
+        passthrough.stream = meter_codex_tokens(passthrough.stream, consumer, model_group.clone());
+    }
 
     forward_response(passthrough)
 }
