@@ -87,11 +87,32 @@ If you locked the proxy down, also set the matching `ANTHROPIC_API_KEY` / `OPENA
 
 ### 5. Observability (optional)
 
-Metrics are always exposed for scrape at `GET /metrics`. Set
-`SUBMUX_OTLP_ENDPOINT=http://localhost:4318` to also push them to an
-OpenTelemetry collector (e.g. the `lgtm-autostart` stack). Per-consumer usage is
-attributed when clients send an `X-Proxy-User-Id: <whoami>_<uuid>` header. An
-importable Grafana dashboard and wiring live in [`examples/`](./examples).
+Submux records metrics through the OpenTelemetry SDK. They are always exposed for
+Prometheus scrape at `GET /metrics`; set an OTLP endpoint to **also** push them to
+a collector (e.g. the `lgtm-autostart` stack).
+
+| Variable | Example value | Effect |
+|---|---|---|
+| `SUBMUX_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP/HTTP base URL of your collector. Unset → push disabled (scrape still works). |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `15000` | Push interval in milliseconds (default `60000`). |
+
+**Per-consumer usage.** To attribute usage per machine/user, each client sends a
+stable `X-Proxy-User-Id` header — by convention `<whoami>_<uuid>`, generated once
+and persisted on the client. With Claude Code:
+
+```bash
+# one-time per machine
+echo "$(whoami)_$(uuidgen)" > ~/.submux_consumer_id
+
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8080
+export ANTHROPIC_CUSTOM_HEADERS="X-Proxy-User-Id: $(cat ~/.submux_consumer_id)"
+claude
+```
+
+submux stamps the value as the `consumer` label on `submux_requests_total` and
+`submux_tokens_total` (a missing or malformed value becomes `consumer="unknown"`).
+An importable Grafana dashboard and collector/scrape wiring live in
+[`examples/`](./examples).
 
 ### CLI reference
 

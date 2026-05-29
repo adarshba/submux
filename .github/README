@@ -36,15 +36,18 @@ FEATURES
 - `/codex/v1/messages` Anthropic Messages in, Codex Responses out — lets
   Claude Code (`ANTHROPIC_BASE_URL=http://submux/codex`) drive a ChatGPT
   subscription end to end.
+- `/v1/models` (+ `/v1/models/:model`) proxy so Claude Code's model-validation
+  probe succeeds against the gateway instead of 404-ing.
 - Auto-discovers credentials from where the official CLIs already store
   them: macOS Keychain item `Claude Code-credentials` or
   `~/.claude/.credentials.json`, and `~/.codex/auth.json`.
 - Optional inbound API key gate (`api_key` in the TOML, or
   `SUBMUX_API_KEY`) with constant-time verification. Disabled by default;
   routes are open on `127.0.0.1` only.
-- Prometheus `/metrics` endpoint and structured `tracing` logs so
-  OpenObserve, Grafana Loki, etc. ingest the request stream out of the
-  box.
+- OpenTelemetry SDK metrics: OTLP push (set `SUBMUX_OTLP_ENDPOINT`) plus a
+  Prometheus `/metrics` scrape endpoint, from one instrument set. Per-consumer
+  usage and token counts keyed on the client `X-Proxy-User-Id` header.
+  Importable Grafana dashboard + collector wiring in `examples/`.
 
 SETUP
 
@@ -72,6 +75,10 @@ SETUP
    OpenAI-compatible client:     base_url=http://127.0.0.1:8080
    Claude Code (ChatGPT Codex):  ANTHROPIC_BASE_URL=http://127.0.0.1:8080/codex
 
+   Optional — observability:
+   Push metrics to a collector:  SUBMUX_OTLP_ENDPOINT=http://localhost:4318
+   Tag per-consumer usage:       ANTHROPIC_CUSTOM_HEADERS="X-Proxy-User-Id: $(whoami)_$(uuidgen)"
+
 4. Optional — lock the proxy down
 
    Edit ~/.config/submux/config.toml and set api_key to any non-empty
@@ -90,12 +97,12 @@ To inspect or rotate config values, edit the TOML directly and restart.
 
 TECH STACK
 
-- Rust 2021, single library + binary crate
+- Rust 2024 edition, single library + binary crate
 - tokio 1.42 + axum 0.7 inbound
 - reqwest 0.12 outbound with per-request cookie jars
 - arc-swap, dashmap, moka, parking_lot for hot-path state
 - chacha20poly1305-shaped api key compare via sha2 (constant-time)
-- tracing + tracing-subscriber + hand-rolled Prometheus exporter
+- tracing + tracing-subscriber; OpenTelemetry SDK metrics (OTLP + Prometheus)
 
 PROJECT STRUCTURE
 
@@ -110,10 +117,10 @@ PROJECT STRUCTURE
    ├── providers/codex     CodexProxy + ChatGPT session + cookies
    ├── protocols/          Anthropic ↔ OpenAI translation, collapse, parse
    ├── streaming/          SSE parser/emitter, relay state machine
-   ├── telemetry/          metrics registry + Prometheus exporter + tracer ids
+   ├── telemetry/          OpenTelemetry metrics (OTLP push + Prometheus) + tracer ids
    ├── server/             axum app, middleware (request-id, auth, panic),
-   │                       routes (messages, chat, codex, codex_messages,
-   │                       health, metrics), banner, shutdown
+   │                       routes (root, messages, models, chat, codex,
+   │                       codex_messages, health, metrics), banner, shutdown
    └── constants/          header names, upstream paths, user agents, limits
 
 See docs/architecture.md for the full request path and module map.
